@@ -127,14 +127,15 @@ abstract class BrookletDao {
     @Query("SELECT id FROM entries WHERE accountId = :accountId AND read = 0 ORDER BY publishedAt DESC") abstract suspend fun unreadIds(accountId: Long): List<Long>
 
     @Query("UPDATE entries SET read = :read, lastOpenedAt = CASE WHEN :read THEN :now ELSE lastOpenedAt END WHERE accountId = :accountId AND id = :entryId")
-    protected abstract suspend fun updateRead(accountId: Long, entryId: Long, read: Boolean, now: Long)
+    protected abstract suspend fun updateRead(accountId: Long, entryId: Long, read: Boolean, now: Long): Int
     @Query("UPDATE entries SET starred = :starred WHERE accountId = :accountId AND id = :entryId")
     protected abstract suspend fun updateStar(accountId: Long, entryId: Long, starred: Boolean)
 
     @Transaction
     open suspend fun setRead(accountId: Long, entryId: Long, read: Boolean, now: Long) {
-        updateRead(accountId, entryId, read, now)
-        upsertMutation(PendingMutationEntity(accountId, entryId, "READ", read, now))
+        if (updateRead(accountId, entryId, read, now) == 1) {
+            upsertMutation(PendingMutationEntity(accountId, entryId, "READ", read, now))
+        }
     }
 
     @Transaction
@@ -146,8 +147,9 @@ abstract class BrookletDao {
     @Transaction
     open suspend fun setReadMany(accountId: Long, entryIds: List<Long>, read: Boolean, now: Long) {
         entryIds.forEach { entryId ->
-            updateRead(accountId, entryId, read, now)
-            upsertMutation(PendingMutationEntity(accountId, entryId, "READ", read, now))
+            if (updateRead(accountId, entryId, read, now) == 1) {
+                upsertMutation(PendingMutationEntity(accountId, entryId, "READ", read, now))
+            }
         }
     }
 

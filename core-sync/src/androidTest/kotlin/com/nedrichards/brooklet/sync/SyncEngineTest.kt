@@ -9,15 +9,21 @@ import com.nedrichards.brooklet.database.EntryEntity
 import com.nedrichards.brooklet.database.TokenCipher
 import com.nedrichards.brooklet.network.MinifluxClient
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class SyncEngineTest {
@@ -83,6 +89,61 @@ class SyncEngineTest {
         assertTrue(stored.read)
         assertEquals("Updated title", stored.title)
         assertEquals("<p>Cached text</p>", stored.html)
+    }
+
+    @Test fun newerUnreadIntentSurvivesOlderReadRequestInFlight() = runBlocking {
+        val dao = database.dao()
+        val encrypted = cipher.encrypt("test-token")
+        dao.upsertAccount(
+            AccountEntity(
+                serverUrl = server.url("/").toString(),
+                username = "nick",
+                tokenCiphertext = encrypted.ciphertext,
+                tokenIv = encrypted.iv,
+                serverVersion = "2.3.2",
+                createdAt = 0,
+            ),
+        )
+        dao.upsertEntries(listOf(entry(read = false)))
+        dao.setRead(accountId = 1, entryId = 7, read = true, now = 50)
+
+        val readRequestStarted = CountDownLatch(1)
+        val releaseReadResponse = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.method == "PUT" && request.requestUrl?.encodedPath == "/v1/entries" -> {
+                    readRequestStarted.countDown()
+                    check(releaseReadResponse.await(5, TimeUnit.SECONDS)) { "Test did not release read response" }
+                    MockResponse().setResponseCode(204)
+                }
+                request.requestUrl?.encodedPath == "/v1/categories" -> jsonResponse("[]")
+                request.requestUrl?.encodedPath == "/v1/feeds" -> jsonResponse("[]")
+                request.requestUrl?.encodedPath == "/v1/entries" ->
+                    jsonResponse("""{"total":1,"entries":[${remoteEntryJson()}]}""")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val sync = async(Dispatchers.IO) {
+            SyncEngine(
+                dao = dao,
+                cipher = cipher,
+                clock = { 999 },
+                minifluxClient = { url, token -> MinifluxClient(url, token, allowInsecureForTests = true) },
+            ).run()
+        }
+        assertTrue(readRequestStarted.await(5, TimeUnit.SECONDS))
+
+        // The user reverses the action after the worker captured and sent its
+        // older "read" snapshot, but before that request is acknowledged.
+        dao.setRead(accountId = 1, entryId = 7, read = false, now = 100)
+        releaseReadResponse.countDown()
+        sync.await()
+
+        val stored = requireNotNull(dao.observeEntry(1, 7).first())
+        assertTrue(server.takeRequest().body.readUtf8().contains("\"status\":\"read\""))
+        assertTrue(!stored.read)
+        assertEquals(listOf(false), dao.pendingMutations().map { it.desiredValue })
     }
 
     private fun entry(read: Boolean) = EntryEntity(

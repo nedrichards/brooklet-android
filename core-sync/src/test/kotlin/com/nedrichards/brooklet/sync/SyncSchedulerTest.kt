@@ -1,11 +1,17 @@
 package com.nedrichards.brooklet.sync
 
+import androidx.work.ExistingWorkPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SyncSchedulerTest {
+    @Test
+    fun immediateActionsAlwaysScheduleBehindRunningSync() {
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, IMMEDIATE_WORK_POLICY)
+    }
+
     @Test
     fun finishedOrMissingWorkIsIdle() {
         val activity = resolveSyncActivity(listOf(snapshot("SUCCEEDED")))

@@ -26,9 +26,12 @@ class MinifluxClientTest {
     @Test fun `batched status and stars use update entries contract`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(204))
         server.enqueue(MockResponse().setResponseCode(204))
+        server.enqueue(MockResponse().setResponseCode(204))
         client().setRead(listOf(4, 9), true)
+        client().setRead(listOf(4), false)
         client().setStarred(listOf(9), true)
         assertEquals("{\"entry_ids\":[4,9],\"status\":\"read\"}", server.takeRequest().body.readUtf8())
+        assertEquals("{\"entry_ids\":[4],\"status\":\"unread\"}", server.takeRequest().body.readUtf8())
         assertEquals("{\"entry_ids\":[9],\"starred\":true}", server.takeRequest().body.readUtf8())
     }
 

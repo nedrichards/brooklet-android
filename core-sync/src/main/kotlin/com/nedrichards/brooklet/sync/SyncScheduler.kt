@@ -25,6 +25,8 @@ data class SyncActivity(
     val isActive: Boolean get() = state != SyncActivityState.IDLE
 }
 
+internal val IMMEDIATE_WORK_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
+
 internal data class SyncWorkSnapshot(
     val state: String,
     val runAttemptCount: Int,
@@ -97,7 +99,11 @@ class WorkManagerSyncScheduler(context: Context) : SyncScheduler {
             .setConstraints(network)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        workManager.enqueueUniqueWork(IMMEDIATE, ExistingWorkPolicy.KEEP, request)
+        // An action can arrive after a running worker has already pushed its
+        // mutation snapshot. Append a follow-up instead of silently dropping
+        // that wake-up; Room coalescing makes the follow-up cheap when the
+        // running worker did include the latest intent.
+        workManager.enqueueUniqueWork(IMMEDIATE, IMMEDIATE_WORK_POLICY, request)
     }
 
     override fun enqueueUserSync() {

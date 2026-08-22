@@ -37,9 +37,38 @@ class BrookletDaoTest {
 
         dao.setRead(accountId = 1, entryId = 11, read = false, now = 200)
         assertEquals(listOf(11L), dao.observeInbox(1).first().map { it.id })
+        assertFalse(requireNotNull(dao.observeEntry(1, 11).first()).read)
+        assertFalse(dao.observeAllEntries().first().single().read)
         val mutation = dao.pendingMutations().single()
         assertFalse(mutation.desiredValue)
         assertEquals(200, mutation.createdAt)
+    }
+
+    @Test fun staleReadActionCannotCreateMutationForMissingEntry() = runBlocking {
+        dao.setRead(accountId = 1, entryId = 404, read = false, now = 100)
+
+        assertTrue(dao.pendingMutations().isEmpty())
+    }
+
+    @Test fun markAllAndUndoRestoreEveryOriginalUnreadEntry() = runBlocking {
+        dao.upsertEntries(listOf(
+            entry(accountId = 1, id = 11, read = false),
+            entry(accountId = 1, id = 12, read = false),
+            entry(accountId = 1, id = 13, read = true),
+        ))
+        val originalUnread = dao.unreadIds(1)
+
+        dao.setReadMany(1, originalUnread, read = true, now = 100)
+        assertTrue(dao.observeInbox(1).first().isEmpty())
+        dao.setReadMany(1, originalUnread, read = false, now = 200)
+
+        assertEquals(listOf(12L, 11L), dao.observeInbox(1).first().map { it.id })
+        assertEquals(
+            mapOf(11L to false, 12L to false, 13L to true),
+            dao.observeAllEntries().first().associate { it.id to it.read },
+        )
+        assertEquals(setOf(11L, 12L), dao.pendingMutations().map { it.entryId }.toSet())
+        assertTrue(dao.pendingMutations().all { !it.desiredValue })
     }
 
     @Test fun inboxIsScopedToRequestedAccount() = runBlocking {
@@ -137,6 +166,35 @@ class BrookletDaoTest {
         assertTrue(dao.observeAllEntries().first().isEmpty())
         assertTrue(dao.pendingMutations().isEmpty())
         assertTrue(dao.pendingKarakeep().isEmpty())
+    }
+
+    @Test fun unreadIntentAndLibraryStateSurviveDatabaseReopen() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val name = "brooklet-read-state-reopen-test.db"
+        context.deleteDatabase(name)
+        var reopened: BrookletDatabase? = null
+        try {
+            Room.databaseBuilder(context, BrookletDatabase::class.java, name)
+                .allowMainThreadQueries()
+                .build()
+                .also { first ->
+                    first.dao().upsertEntries(listOf(entry(accountId = 1, id = 11, read = true)))
+                    first.dao().setRead(accountId = 1, entryId = 11, read = false, now = 200)
+                    first.close()
+                }
+
+            reopened = Room.databaseBuilder(context, BrookletDatabase::class.java, name)
+                .allowMainThreadQueries()
+                .build()
+            val reopenedDao = reopened.dao()
+
+            assertFalse(requireNotNull(reopenedDao.observeEntry(1, 11).first()).read)
+            assertFalse(reopenedDao.observeAllEntries().first().single().read)
+            assertFalse(reopenedDao.pendingMutations().single().desiredValue)
+        } finally {
+            reopened?.close()
+            context.deleteDatabase(name)
+        }
     }
 
     private fun entry(
