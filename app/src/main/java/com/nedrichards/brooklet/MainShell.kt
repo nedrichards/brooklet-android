@@ -138,6 +138,16 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
             entryId = readerId!!,
             repository = application.repository,
             onBack = { readerId = null },
+            onKeptUnread = {
+                readerId = null
+                scope.launch {
+                    snackbar.showSnackbar(
+                        message = "Kept unread",
+                        withDismissAction = true,
+                        duration = SnackbarDuration.Short,
+                    )
+                }
+            },
             onPrevious = readerOrder.before(readerId!!)?.let { { readerId = it } },
             onNext = readerOrder.after(readerId!!)?.let { { readerId = it } },
         )

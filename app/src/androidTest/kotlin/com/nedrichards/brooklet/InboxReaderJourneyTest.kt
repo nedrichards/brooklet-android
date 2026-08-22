@@ -95,6 +95,44 @@ class InboxReaderJourneyTest {
         }
     }
 
+    @Test fun keepingReaderEntryUnreadDoesNotTriggerMarkReadAgain() {
+        var read by mutableStateOf<Boolean?>(null)
+        var markReadRequests = 0
+
+        compose.setContent {
+            MarkEntryReadOnOpen(entryId = 1, loadedEntryId = if (read == null) null else 1, read = read) {
+                markReadRequests += 1
+                read = true
+            }
+        }
+
+        compose.runOnIdle { read = false }
+        compose.waitUntil(timeoutMillis = 5_000) { markReadRequests == 1 }
+        compose.runOnIdle { read = false }
+        compose.waitForIdle()
+
+        compose.runOnIdle { assertEquals(1, markReadRequests) }
+    }
+
+    @Test fun readerNavigationDoesNotApplyStaleEntryStateToNewEntry() {
+        var loadedEntryId by mutableStateOf<Long?>(1)
+        var read by mutableStateOf<Boolean?>(true)
+        var markReadRequests = 0
+
+        compose.setContent {
+            MarkEntryReadOnOpen(entryId = 2, loadedEntryId = loadedEntryId, read = read) {
+                markReadRequests += 1
+            }
+        }
+
+        compose.runOnIdle { read = false }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(0, markReadRequests) }
+
+        compose.runOnIdle { loadedEntryId = 2 }
+        compose.waitUntil(timeoutMillis = 5_000) { markReadRequests == 1 }
+    }
+
     @Test fun sharedUrlShowsSubscriptionConfirmationAndCanBeDismissed() {
         var dismissed = false
         val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as BrookletApplication

@@ -86,14 +86,22 @@ private val articleImages = ArticleImageClient()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(accountId: Long, entryId: Long, repository: EntryRepository, onBack: () -> Unit, onPrevious: (() -> Unit)?, onNext: (() -> Unit)?) {
+fun ReaderScreen(
+    accountId: Long,
+    entryId: Long,
+    repository: EntryRepository,
+    onBack: () -> Unit,
+    onKeptUnread: () -> Unit,
+    onPrevious: (() -> Unit)?,
+    onNext: (() -> Unit)?,
+) {
     val entry by repository.entry(accountId, entryId).collectAsStateWithLifecycle(initialValue = null)
     val position by repository.position(accountId, entryId).collectAsStateWithLifecycle(initialValue = null)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val online = rememberOnlineState()
-    LaunchedEffect(entryId, entry?.read) { if (entry?.read == false) repository.markRead(accountId, entryId, true) }
+    MarkEntryReadOnOpen(entryId, entry?.id, entry?.read) { repository.markRead(accountId, entryId, true) }
     LaunchedEffect(entryId, position) { position?.let { listState.scrollToItem(it.firstVisibleBlock, it.offsetPx) } }
     DisposableEffect(entryId) { onDispose { scope.launch { repository.savePosition(accountId, entryId, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) } } }
 
@@ -103,7 +111,12 @@ fun ReaderScreen(accountId: Long, entryId: Long, repository: EntryRepository, on
             ReaderTopAppBar(
                 entry = current,
                 onBack = onBack,
-                onKeepUnread = { scope.launch { repository.markRead(accountId, entryId, false); onBack() } },
+                onKeepUnread = {
+                    scope.launch {
+                        repository.markRead(accountId, entryId, false)
+                        onKeptUnread()
+                    }
+                },
                 onOpenInBrowser = { context.startActivity(Intent(Intent.ACTION_VIEW, current.url.toUri())) },
                 onSave = { scope.launch { repository.setStarred(accountId, entryId, !current.starred) } },
                 onSendToKarakeep = { scope.launch { repository.sendToKarakeep(current, KarakeepRoute.MINIFLUX) } },
@@ -129,6 +142,25 @@ fun ReaderScreen(accountId: Long, entryId: Long, repository: EntryRepository, on
             }
         }
         }
+    }
+}
+
+/**
+ * Mark an unread entry once when it first becomes available to the reader.
+ *
+ * The live read value must not be a key: "Keep unread" changes it back to
+ * false, and keying the effect to that value would immediately mark it read
+ * again before the reader leaves composition.
+ */
+@Composable
+internal fun MarkEntryReadOnOpen(
+    entryId: Long,
+    loadedEntryId: Long?,
+    read: Boolean?,
+    markRead: suspend () -> Unit,
+) {
+    LaunchedEffect(entryId, loadedEntryId) {
+        if (loadedEntryId == entryId && read == false) markRead()
     }
 }
 
