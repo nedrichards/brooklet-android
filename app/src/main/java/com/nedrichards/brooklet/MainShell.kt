@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Inbox
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -44,6 +45,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -101,9 +104,10 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 fun MainShell(application: BrookletApplication, accountId: Long) {
     var destination by rememberSaveable { mutableStateOf(Destination.INBOX) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var inboxActionsOpen by remember { mutableStateOf(false) }
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
     var readerOrder by remember { mutableStateOf(emptyList<Long>()) }
-    val inbox by application.repository.inbox.collectAsStateWithLifecycle(initialValue = emptyList())
+    val inbox by application.repository.inbox(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     val savedState = if (destination == Destination.SAVED) {
         application.repository.saved.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
@@ -146,10 +150,27 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
             val result = snackbar.showSnackbar(
                 message = "Marked read",
                 actionLabel = "Undo",
-                withDismissAction = false,
+                // A second, explicit exit is important when the user decides
+                // the change should stand. The Undo action itself dismisses
+                // the snackbar via SnackbarHostState.
+                withDismissAction = true,
                 duration = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) application.repository.markRead(entry.accountId, entry.id, false)
+        }
+    }
+    val markAllRead = {
+        scope.launch {
+            val ids = application.repository.markAllRead(accountId)
+            if (snackbar.showSnackbar(
+                    message = "Marked ${ids.size} articles read",
+                    actionLabel = "Undo",
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Short,
+                ) == SnackbarResult.ActionPerformed
+            ) {
+                application.repository.restoreUnread(accountId, ids)
+            }
         }
     }
     val open: (Entry, List<Entry>) -> Unit = { entry, list -> readerOrder = list.map { it.id }; readerId = entry.id }
@@ -170,20 +191,6 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
                             }
                         },
                         actions = {
-                            if (!settingsOpen && destination == Destination.INBOX && inbox.isNotEmpty()) IconButton(onClick = {
-                                scope.launch {
-                                    val ids = application.repository.markAllRead(accountId)
-                                    if (snackbar.showSnackbar(
-                                            message = "Marked ${ids.size} articles read",
-                                            actionLabel = "Undo",
-                                            withDismissAction = false,
-                                            duration = SnackbarDuration.Short,
-                                        ) == SnackbarResult.ActionPerformed
-                                    ) {
-                                        application.repository.restoreUnread(accountId, ids)
-                                    }
-                                }
-                            }) { Icon(Icons.Rounded.DoneAll, "Mark all read") }
                             if (!settingsOpen) {
                                 when {
                                     syncActivity.isActive && syncActivity.userInitiated -> {
@@ -208,7 +215,23 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
                                     }
                                 }
                             }
-                            if (!settingsOpen) IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Rounded.Settings, "Settings") }
+                            if (!settingsOpen) Box {
+                                IconButton(onClick = { inboxActionsOpen = true }) {
+                                    Icon(Icons.Rounded.MoreVert, "More actions")
+                                }
+                                DropdownMenu(expanded = inboxActionsOpen, onDismissRequest = { inboxActionsOpen = false }) {
+                                    if (destination == Destination.INBOX && inbox.isNotEmpty()) DropdownMenuItem(
+                                        text = { Text("Mark all read") },
+                                        leadingIcon = { Icon(Icons.Rounded.DoneAll, null) },
+                                        onClick = { inboxActionsOpen = false; markAllRead() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Settings") },
+                                        leadingIcon = { Icon(Icons.Rounded.Settings, null) },
+                                        onClick = { inboxActionsOpen = false; settingsOpen = true },
+                                    )
+                                }
+                            }
                         },
                     )
                     }
@@ -256,7 +279,7 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EntryList(
+internal fun EntryList(
     entries: List<Entry>,
     emptyText: String,
     padding: PaddingValues,
@@ -320,9 +343,20 @@ private fun EntryList(
                     items(entries, key = { it.id }) { entry ->
                         Column(Modifier.animateItem()) {
                             if (triage) {
+                                // Treat a completed swipe as a command, not as
+                                // persistent UI state. Otherwise Undo can put
+                                // this same keyed item back into the list with
+                                // its old dismissed state and immediately mark
+                                // it read again (and queue another snackbar).
                                 val dismiss = rememberSwipeToDismissBoxState()
                                 androidx.compose.runtime.LaunchedEffect(dismiss.currentValue) {
-                                    if (dismiss.currentValue != SwipeToDismissBoxValue.Settled) onRead(entry)
+                                    if (dismiss.currentValue != SwipeToDismissBoxValue.Settled) {
+                                        onRead(entry)
+                                        // Reset before an Undo can reinsert this
+                                        // keyed row, so it cannot replay the
+                                        // already-handled swipe.
+                                        dismiss.reset()
+                                    }
                                 }
                                 SwipeToDismissBox(
                                     state = dismiss,
@@ -375,6 +409,9 @@ private fun HeadlineRow(entry: Entry, onRead: (() -> Unit)?, onOpen: () -> Unit)
         title = entry.title,
         metadata = entryMetadata(entry),
         onClick = onOpen,
+        // Inbox is for quick triage; read state is expressed by membership,
+        // not a heavier title. Library retains unread emphasis for browsing.
+        isUnread = false,
         modifier = Modifier.background(MaterialTheme.colorScheme.surface).semantics { customActions = actions },
     ) {
         if (onRead == null) Icon(Icons.AutoMirrored.Rounded.Article, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
