@@ -1,6 +1,6 @@
 [versions]
 androidGradlePlugin = "9.3.1"
-kotlin = "2.3.21"
+kotlin = "2.4.10"
 ksp = "2.3.11"
 composeBom = "2026.08.00"
 core = "1.18.0"
