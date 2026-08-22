@@ -19,6 +19,11 @@ fun localBooleanProperty(name: String): Boolean {
     return value.equals("true", ignoreCase = true)
 }
 
+fun localStringProperty(name: String): String =
+    providers.gradleProperty(name).orNull ?: localProperties.getProperty(name).orEmpty()
+
+fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
 val debugSignRelease = localBooleanProperty("brooklet.debugSignRelease")
 
 android {
@@ -28,12 +33,20 @@ android {
     defaultConfig {
         applicationId = "com.nedrichards.brooklet"
         minSdk = 28
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "DEV_MINIFLUX_URL", "\"\"")
+        buildConfigField("String", "DEV_MINIFLUX_TOKEN", "\"\"")
     }
     buildTypes {
+        debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            buildConfigField("String", "DEV_MINIFLUX_URL", buildConfigString(localStringProperty("brooklet.devMinifluxUrl")))
+            buildConfigField("String", "DEV_MINIFLUX_TOKEN", buildConfigString(localStringProperty("brooklet.devMinifluxToken")))
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -49,7 +62,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true; aidl = false; buildConfig = false; shaders = false }
+    buildFeatures { compose = true; aidl = false; buildConfig = true; shaders = false }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
 }
 

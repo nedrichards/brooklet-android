@@ -51,8 +51,10 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SetupScreen(application: BrookletApplication) {
-    var server by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
+    // Debug-only build fields come from the ignored local.properties file.
+    // Release builds receive no fields, so credentials are never packaged there.
+    var server by remember { mutableStateOf(if (BuildConfig.DEBUG) BuildConfig.DEV_MINIFLUX_URL else "") }
+    var token by remember { mutableStateOf(if (BuildConfig.DEBUG) BuildConfig.DEV_MINIFLUX_TOKEN else "") }
     var error by remember { mutableStateOf<String?>(null) }
     var working by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
