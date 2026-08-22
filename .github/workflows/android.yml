@@ -1,0 +1,26 @@
+name: Android checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify source and release build
+        run: >-
+          ./gradlew --no-daemon
+          :core-model:test :core-network:test :core-sync:test
+          :app-phone:testDebugUnitTest lintDebug
+          :app-phone:assembleDebug :app-phone:assembleRelease

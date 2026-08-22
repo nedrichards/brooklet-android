@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- One mark, one colour. The inner contour is transparent negative space. -->
+    <group>
+        <clip-path android:pathData="M54,22C50,30 34,45 34,59C34,73 43,83 54,83C67,83 74,73 74,59C74,45 59,30 54,22Z" />
+        <path
+            android:fillColor="#62E3D1"
+            android:fillType="evenOdd"
+            android:pathData="M54,22C50,30 34,45 34,59C34,73 43,83 54,83C67,83 74,73 74,59C74,45 59,30 54,22ZM66,30C69,44 64,50 55,55C49,58 49,63 55,67C61,71 64,76 62,83L55,83C57,77 55,74 50,71C41,65 41,55 51,49C59,44 61,40 66,30Z" />
+    </group>
+</vector>
