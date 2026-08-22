@@ -18,7 +18,7 @@ abstract class BrookletDao {
     @Upsert abstract suspend fun upsertCursor(value: SyncCursorEntity)
     @Upsert abstract suspend fun upsertSyncState(value: SyncStateEntity)
     @Upsert abstract suspend fun upsertMutation(value: PendingMutationEntity)
-    @Upsert abstract suspend fun upsertKarakeep(value: PendingKarakeepEntity)
+    @Upsert protected abstract suspend fun upsertKarakeep(value: PendingKarakeepEntity)
     @Upsert abstract suspend fun upsertKarakeepConfig(value: KarakeepConfigEntity)
     @Query("SELECT * FROM karakeep_config WHERE accountId = :accountId") abstract suspend fun karakeepConfig(accountId: Long): KarakeepConfigEntity?
     @Upsert abstract suspend fun upsertStoragePolicy(value: StoragePolicyEntity)
@@ -73,10 +73,10 @@ abstract class BrookletDao {
         FROM entries e
         LEFT JOIN feeds f ON f.accountId = e.accountId AND f.id = e.feedId
         LEFT JOIN categories c ON c.accountId = f.accountId AND c.id = f.categoryId
-        WHERE e.read = 0
+        WHERE e.accountId = :accountId AND e.read = 0
         ORDER BY e.publishedAt DESC
     """)
-    abstract fun observeInbox(): Flow<List<EntryRow>>
+    abstract fun observeInbox(accountId: Long): Flow<List<EntryRow>>
 
     @Query("""
         SELECT e.accountId, e.id, e.feedId, COALESCE(f.title, '') AS feedTitle,
@@ -116,6 +116,8 @@ abstract class BrookletDao {
     @Query("SELECT * FROM pending_mutations ORDER BY createdAt") abstract suspend fun pendingMutations(): List<PendingMutationEntity>
     @Query("SELECT * FROM entries WHERE accountId = :accountId AND id IN (:entryIds)") abstract suspend fun entriesById(accountId: Long, entryIds: List<Long>): List<EntryEntity>
     @Query("SELECT * FROM pending_karakeep WHERE state != 'SAVED' ORDER BY createdAt") abstract suspend fun pendingKarakeep(): List<PendingKarakeepEntity>
+    @Query("SELECT id FROM pending_karakeep WHERE accountId = :accountId AND canonicalUrl = :canonicalUrl LIMIT 1")
+    protected abstract suspend fun karakeepId(accountId: Long, canonicalUrl: String): Long?
     @Query("SELECT * FROM sync_cursors WHERE accountId = :accountId") abstract suspend fun cursor(accountId: Long): SyncCursorEntity?
     @Query("SELECT * FROM sync_cursors WHERE accountId = :accountId") abstract fun observeCursor(accountId: Long): Flow<SyncCursorEntity?>
     @Query("SELECT * FROM sync_state WHERE accountId = :accountId") abstract fun observeSyncState(accountId: Long): Flow<SyncStateEntity?>
@@ -149,6 +151,13 @@ abstract class BrookletDao {
         }
     }
 
+    /** Coalesce repeat saves of the same canonical URL into one durable delivery. */
+    @Transaction
+    open suspend fun queueKarakeep(value: PendingKarakeepEntity) {
+        val id = karakeepId(value.accountId, value.canonicalUrl)
+        upsertKarakeep(value.copy(id = id ?: value.id))
+    }
+
     /** Remote state must not overwrite a newer, unacknowledged local intent. */
     @Transaction
     open suspend fun mergeRemoteEntries(accountId: Long, remote: List<EntryEntity>) {
@@ -175,14 +184,14 @@ abstract class BrookletDao {
     abstract suspend fun recordKarakeepFailure(id: Long, state: String, message: String)
 
     @Query("""
-        DELETE FROM entries WHERE id IN (
+        DELETE FROM entries WHERE accountId = :accountId AND id IN (
             SELECT e.id FROM entries e
-            WHERE e.read = 1 AND e.starred = 0 AND e.publishedAt < :cutoff
+            WHERE e.accountId = :accountId AND e.read = 1 AND e.starred = 0 AND e.publishedAt < :cutoff
               AND (e.lastOpenedAt IS NULL OR e.lastOpenedAt < :cutoff)
               AND NOT EXISTS (SELECT 1 FROM pending_mutations m WHERE m.accountId = e.accountId AND m.entryId = e.id)
               AND NOT EXISTS (SELECT 1 FROM pending_karakeep k WHERE k.accountId = e.accountId AND k.entryId = e.id)
             ORDER BY e.publishedAt DESC LIMIT -1 OFFSET :keepAtMost
         )
     """)
-    abstract suspend fun pruneReadEntries(cutoff: Long, keepAtMost: Int = 5000): Int
+    abstract suspend fun pruneReadEntries(accountId: Long, cutoff: Long, keepAtMost: Int = 5000): Int
 }

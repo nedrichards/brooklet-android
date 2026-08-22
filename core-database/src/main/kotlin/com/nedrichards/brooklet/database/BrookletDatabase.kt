@@ -22,9 +22,13 @@ abstract class BrookletDatabase : RoomDatabase() {
             context.applicationContext,
             BrookletDatabase::class.java,
             "brooklet.db",
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2)
+            // The UI and WorkManager each hold a Room instance. Propagate commits
+            // between them so initial sync can yield to the inbox on its first page.
+            .enableMultiInstanceInvalidation()
+            .build()
 
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS sync_state (

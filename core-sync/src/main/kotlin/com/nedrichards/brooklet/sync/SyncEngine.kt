@@ -22,13 +22,16 @@ class SyncEngine(
     private val cipher: TokenCipher,
     private val clock: () -> Long = System::currentTimeMillis,
     private val json: Json = Json { encodeDefaults = true },
+    private val minifluxClient: (String, String) -> MinifluxClient = { serverUrl, token ->
+        MinifluxClient(serverUrl, token)
+    },
 ) {
     suspend fun run(refreshFeeds: Boolean = false) {
         val account = dao.account() ?: return
         try {
             state(account.id, "CONNECTING")
             val token = cipher.decrypt(TokenCipher.Encrypted(account.tokenCiphertext, account.tokenIv))
-            val miniflux = MinifluxClient(account.serverUrl, token)
+            val miniflux = minifluxClient(account.serverUrl, token)
             if (refreshFeeds) {
                 state(account.id, "REFRESHING_FEEDS")
                 miniflux.refreshFeeds()
@@ -40,10 +43,10 @@ class SyncEngine(
             state(account.id, "PRUNING")
             val policy = dao.storagePolicy(account.id)
             if (policy == null) {
-                dao.pruneReadEntries(clock() - 30L * 24 * 60 * 60 * 1000)
+                dao.pruneReadEntries(account.id, clock() - 30L * 24 * 60 * 60 * 1000)
             } else {
                 policy.retainReadDays?.let { days ->
-                    dao.pruneReadEntries(clock() - days.toLong() * 24 * 60 * 60 * 1000, policy.keepAtMost)
+                    dao.pruneReadEntries(account.id, clock() - days.toLong() * 24 * 60 * 60 * 1000, policy.keepAtMost)
                 }
             }
             state(account.id, "COMPLETE")

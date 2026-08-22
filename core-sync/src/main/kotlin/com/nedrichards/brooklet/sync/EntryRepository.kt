@@ -21,7 +21,7 @@ class EntryRepository(
     private val scheduler: SyncScheduler,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    val inbox: Flow<List<Entry>> = dao.observeInbox().map { rows -> rows.map(::map) }
+    fun inbox(accountId: Long): Flow<List<Entry>> = dao.observeInbox(accountId).map { rows -> rows.map(::map) }
     val saved: Flow<List<Entry>> = dao.observeSaved().map { rows -> rows.map(::map) }
     val allEntries: Flow<List<Entry>> = dao.observeAllEntries().map { rows -> rows.map(::map) }
     val pendingCount: Flow<Int> = dao.observePendingMutationCount()
@@ -52,7 +52,7 @@ class EntryRepository(
         dao.upsertPosition(ReaderPositionEntity(accountId, entryId, block, offset, clock()))
 
     suspend fun sendToKarakeep(entry: Entry, route: KarakeepRoute) {
-        dao.upsertKarakeep(PendingKarakeepEntity(
+        dao.queueKarakeep(PendingKarakeepEntity(
             accountId = entry.accountId,
             entryId = entry.id,
             canonicalUrl = canonicalUrl(entry.url),
