@@ -6,6 +6,10 @@ import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.text.method.LinkMovementMethod
+import android.widget.TextView
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.text.HtmlCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -89,7 +93,6 @@ fun ReaderScreen(accountId: Long, entryId: Long, repository: EntryRepository, on
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val online = rememberOnlineState()
-    var moreActionsOpen by remember(entryId) { mutableStateOf(false) }
     LaunchedEffect(entryId, entry?.read) { if (entry?.read == false) repository.markRead(accountId, entryId, true) }
     LaunchedEffect(entryId, position) { position?.let { listState.scrollToItem(it.firstVisibleBlock, it.offsetPx) } }
     DisposableEffect(entryId) { onDispose { scope.launch { repository.savePosition(accountId, entryId, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) } } }
@@ -97,48 +100,14 @@ fun ReaderScreen(accountId: Long, entryId: Long, repository: EntryRepository, on
     val current = entry ?: return FullScreenProgress()
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(current.feedTitle, maxLines = 1) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
-                actions = {
-                    IconButton(onClick = { scope.launch { repository.markRead(accountId, entryId, false); onBack() } }) {
-                        Icon(Icons.Rounded.MarkEmailUnread, "Keep unread")
-                    }
-                    IconButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, current.url.toUri())) }) {
-                        Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in browser")
-                    }
-                    Box {
-                        IconButton(onClick = { moreActionsOpen = true }) {
-                            Icon(Icons.Rounded.MoreVert, "More article actions")
-                        }
-                        DropdownMenu(expanded = moreActionsOpen, onDismissRequest = { moreActionsOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text(if (current.starred) "Remove from saved" else "Save") },
-                                leadingIcon = { Icon(if (current.starred) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, null) },
-                                onClick = {
-                                    scope.launch { repository.setStarred(accountId, entryId, !current.starred) }
-                                    moreActionsOpen = false
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Send to Karakeep") },
-                                leadingIcon = { Icon(Icons.Rounded.CloudUpload, null) },
-                                onClick = {
-                                    scope.launch { repository.sendToKarakeep(current, KarakeepRoute.MINIFLUX) }
-                                    moreActionsOpen = false
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Share URL") },
-                                leadingIcon = { Icon(Icons.Rounded.Share, null) },
-                                onClick = {
-                                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, current.url), null))
-                                    moreActionsOpen = false
-                                },
-                            )
-                        }
-                    }
-                },
+            ReaderTopAppBar(
+                entry = current,
+                onBack = onBack,
+                onKeepUnread = { scope.launch { repository.markRead(accountId, entryId, false); onBack() } },
+                onOpenInBrowser = { context.startActivity(Intent(Intent.ACTION_VIEW, current.url.toUri())) },
+                onSave = { scope.launch { repository.setStarred(accountId, entryId, !current.starred) } },
+                onSendToKarakeep = { scope.launch { repository.sendToKarakeep(current, KarakeepRoute.MINIFLUX) } },
+                onShareUrl = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, current.url), null)) },
             )
         },
     ) { padding ->
@@ -163,15 +132,80 @@ fun ReaderScreen(accountId: Long, entryId: Long, repository: EntryRepository, on
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ReaderTopAppBar(
+    entry: com.nedrichards.brooklet.model.Entry,
+    onBack: () -> Unit,
+    onKeepUnread: () -> Unit,
+    onOpenInBrowser: () -> Unit,
+    onSave: () -> Unit,
+    onSendToKarakeep: () -> Unit,
+    onShareUrl: () -> Unit,
+) {
+    var moreActionsOpen by remember(entry.id) { mutableStateOf(false) }
+    TopAppBar(
+        title = { Text(entry.feedTitle, maxLines = 1) },
+        navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
+        actions = {
+            IconButton(onClick = onKeepUnread) { Icon(Icons.Rounded.MarkEmailUnread, "Keep unread") }
+            IconButton(onClick = onOpenInBrowser) { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open in browser") }
+            Box {
+                IconButton(onClick = { moreActionsOpen = true }) { Icon(Icons.Rounded.MoreVert, "More article actions") }
+                DropdownMenu(expanded = moreActionsOpen, onDismissRequest = { moreActionsOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (entry.starred) "Remove from saved" else "Save") },
+                        leadingIcon = { Icon(if (entry.starred) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, null) },
+                        onClick = { onSave(); moreActionsOpen = false },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Send to Karakeep") },
+                        leadingIcon = { Icon(Icons.Rounded.CloudUpload, null) },
+                        onClick = { onSendToKarakeep(); moreActionsOpen = false },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Share URL") },
+                        leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                        onClick = { onShareUrl(); moreActionsOpen = false },
+                    )
+                }
+            }
+        },
+    )
+}
+
 @Composable
 private fun DocumentBlockView(block: DocumentBlock, articleUrl: String, online: Boolean) {
     when (block) {
-        is DocumentBlock.Heading -> Text(block.text, style = if (block.level <= 2) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 6.dp))
-        is DocumentBlock.Paragraph -> Text(block.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 20.dp, vertical = 7.dp))
-        is DocumentBlock.Quote -> Text(block.text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 32.dp, vertical = 12.dp))
+        is DocumentBlock.Heading -> RichArticleText(block.html, block.text, Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 6.dp), if (block.level <= 2) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge)
+        is DocumentBlock.Paragraph -> RichArticleText(block.html, block.text, Modifier.padding(horizontal = 20.dp, vertical = 7.dp), MaterialTheme.typography.bodyLarge)
+        is DocumentBlock.Quote -> RichArticleText(block.html, block.text, Modifier.padding(horizontal = 32.dp, vertical = 12.dp), MaterialTheme.typography.bodyLarge)
         is DocumentBlock.Code -> Text(block.text, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp))
-        is DocumentBlock.ListItem -> Row(Modifier.padding(horizontal = 24.dp, vertical = 3.dp)) { Text(if (block.ordered) "1. " else "• ", fontWeight = FontWeight.Bold); Text(block.text, style = MaterialTheme.typography.bodyLarge) }
+        is DocumentBlock.ListItem -> Row(Modifier.padding(horizontal = 24.dp, vertical = 3.dp)) { Text(if (block.ordered) "1. " else "• ", fontWeight = FontWeight.Bold); RichArticleText(block.html, block.text, Modifier.weight(1f), MaterialTheme.typography.bodyLarge) }
+        is DocumentBlock.Caption -> RichArticleText(block.html, block.text, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), MaterialTheme.typography.labelMedium)
+        is DocumentBlock.Table -> Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { block.rows.forEach { row -> Text(row.joinToString("  ·  "), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 3.dp)) } }
         is DocumentBlock.Image -> OnlineArticleImage(block, articleUrl, online)
+    }
+}
+
+@Composable
+private fun RichArticleText(html: String?, fallback: String, modifier: Modifier, style: androidx.compose.ui.text.TextStyle) {
+    if (html == null) {
+        Text(fallback, style = style, modifier = modifier)
+    } else {
+        AndroidView(
+            modifier = modifier,
+            factory = { context -> TextView(context).apply { movementMethod = LinkMovementMethod.getInstance() } },
+            update = { view ->
+                // Article markup is untrusted. Keep only absolute web links for
+                // TextView's URLSpan; there is no script, file, intent, or
+                // custom-scheme escape hatch in the reader.
+                val safeHtml = html.replace(Regex("(?i)\\s+href\\s*=\\s*(['\"])(?!https?://)[^'\"]*\\1"), "")
+                view.text = HtmlCompat.fromHtml(safeHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
+                view.textSize = style.fontSize.value
+                view.setTextColor(android.graphics.Color.BLACK)
+            },
+        )
     }
 }
 
