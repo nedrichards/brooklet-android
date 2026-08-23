@@ -84,6 +84,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.CircleShape
@@ -150,10 +151,10 @@ internal fun MainShellContent(
     var readerOrder by remember { mutableStateOf(emptyList<Long>()) }
     val inbox by repository.inbox(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     val savedState = if (destination == Destination.SAVED) {
-        repository.saved.collectAsStateWithLifecycle(initialValue = emptyList())
+        repository.saved(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val allState = if (destination == Destination.LIBRARY) {
-        repository.allEntries.collectAsStateWithLifecycle(initialValue = emptyList())
+        repository.allEntries(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val categoriesState = if (destination == Destination.LIBRARY) {
         repository.categories(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
@@ -207,11 +208,15 @@ internal fun MainShellContent(
     }
 
     if (readerId != null) {
+        val activeReaderId = readerId!!
         Box(Modifier.fillMaxSize()) {
             ReaderScreen(
                 accountId = accountId,
-                entryId = readerId!!,
+                entryId = activeReaderId,
                 repository = repository,
+                savePosition = { block, offset ->
+                    application.saveReaderPosition(accountId, activeReaderId, block, offset)
+                },
                 onBack = { readerId = null },
                 onKeptUnread = {
                     readerId = null
@@ -223,8 +228,8 @@ internal fun MainShellContent(
                         )
                     }
                 },
-                onPrevious = readerOrder.before(readerId!!)?.let { { readerId = it } },
-                onNext = readerOrder.after(readerId!!)?.let { { readerId = it } },
+                onPrevious = readerOrder.before(activeReaderId)?.let { { readerId = it } },
+                onNext = readerOrder.after(activeReaderId)?.let { { readerId = it } },
             )
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
         }
@@ -323,7 +328,7 @@ internal fun MainShellContent(
                             onRead = markRead,
                         ) { open(it, inbox) }
                         Destination.SAVED -> SavedList(saved, if (syncActivity.isActive) "No saved articles cached yet" else "Nothing saved yet", padding) { open(it, saved) }
-                        Destination.LIBRARY -> LibraryScreen(all, categories, feeds, padding) { open(it, all) }
+                        Destination.LIBRARY -> LibraryScreen(all, categories, feeds, padding, open)
                     }
                 }
             }
@@ -401,7 +406,11 @@ internal fun EntryList(
             if (entries.isEmpty()) {
                 EmptyEntryState(emptyText, if (triage) Icons.Rounded.Inbox else Icons.Rounded.Bookmark, PaddingValues())
             } else {
-                LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 88.dp)) {
+                LazyColumn(
+                    Modifier.fillMaxSize().testTag("entry-list"),
+                    state = listState,
+                    contentPadding = PaddingValues(bottom = 88.dp),
+                ) {
                     items(entries, key = { it.id }) { entry ->
                         Column(Modifier.animateItem()) {
                             if (triage) {
@@ -474,7 +483,8 @@ private fun HeadlineRow(entry: Entry, onRead: (() -> Unit)?, onOpen: () -> Unit)
         // Inbox is for quick triage; read state is expressed by membership,
         // not a heavier title. Library retains unread emphasis for browsing.
         isUnread = false,
-        modifier = Modifier.background(MaterialTheme.colorScheme.surface).semantics { customActions = actions },
+        modifier = Modifier.background(MaterialTheme.colorScheme.surface).testTag("entry-${entry.id}")
+            .semantics { customActions = actions },
     ) {
         if (onRead == null) Icon(Icons.AutoMirrored.Rounded.Article, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }

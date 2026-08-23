@@ -11,7 +11,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 enum class SyncActivityState { IDLE, QUEUED, RUNNING, RETRYING }
@@ -25,7 +24,8 @@ data class SyncActivity(
     val isActive: Boolean get() = state != SyncActivityState.IDLE
 }
 
-internal val IMMEDIATE_WORK_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
+internal val ACTION_DEBOUNCE_POLICY = ExistingWorkPolicy.REPLACE
+internal val ACTION_DELIVERY_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
 
 internal data class SyncWorkSnapshot(
     val state: String,
@@ -56,7 +56,8 @@ internal fun resolveSyncActivity(values: List<SyncWorkSnapshot>): SyncActivity {
 
 interface SyncScheduler {
     val activity: Flow<SyncActivity>
-    fun enqueueImmediate()
+    fun enqueueActionDelivery()
+    fun enqueueForegroundSync()
     fun enqueueUserSync()
     fun enqueueManualRefresh()
     fun cancelImmediate()
@@ -67,102 +68,119 @@ interface SyncScheduler {
 class WorkManagerSyncScheduler(context: Context) : SyncScheduler {
     private val workManager = WorkManager.getInstance(context.applicationContext)
     private val network = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-    override val activity: Flow<SyncActivity> = combine(
-        workManager.getWorkInfosForUniqueWorkFlow(IMMEDIATE).map { values ->
-            values.map { info ->
-                SyncWorkSnapshot(
-                    state = info.state.name,
-                    runAttemptCount = info.runAttemptCount,
-                    userInitiated = USER_INITIATED in info.tags,
-                    backgroundScheduled = false,
-                    cancellable = true,
-                )
-            }
-        },
-        workManager.getWorkInfosByTagFlow(SYNC_WORK).map { values ->
-            values.map { info ->
-                SyncWorkSnapshot(
-                    state = info.state.name,
-                    runAttemptCount = info.runAttemptCount,
-                    userInitiated = USER_INITIATED in info.tags,
-                    backgroundScheduled = BACKGROUND_SCHEDULED in info.tags,
-                    cancellable = CANCELLABLE in info.tags,
-                )
-            }
-        },
-    ) { immediate, tagged -> resolveSyncActivity(immediate + tagged) }
+    private val periodicNetwork = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .setRequiresBatteryNotLow(true)
+        .build()
+    override val activity: Flow<SyncActivity> = workManager.getWorkInfosByTagFlow(SYNC_WORK).map { values ->
+        resolveSyncActivity(values.map { info ->
+            SyncWorkSnapshot(
+                state = info.state.name,
+                runAttemptCount = info.runAttemptCount,
+                userInitiated = USER_INITIATED in info.tags,
+                backgroundScheduled = BACKGROUND_SCHEDULED in info.tags,
+                cancellable = CANCELLABLE in info.tags,
+            )
+        })
+    }
 
-    override fun enqueueImmediate() {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .addTag(SYNC_WORK)
+    override fun enqueueActionDelivery() {
+        val request = OneTimeWorkRequestBuilder<ActionSyncDebounceWorker>()
+            .addTag(SYNC_CONTROL_WORK)
+            .setInitialDelay(ACTION_DEBOUNCE_SECONDS, TimeUnit.SECONDS)
+            .build()
+        workManager.enqueueUniqueWork(ACTION_DEBOUNCE, ACTION_DEBOUNCE_POLICY, request)
+    }
+
+    internal fun enqueueActionWorker() {
+        val request = syncRequest(SyncWorkIntent.ACTION_DELIVERY)
+            .addTag(BACKGROUND_SCHEDULED)
+            .setConstraints(network)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
+            .build()
+        // Debounce collapses a rapid gesture burst. If delivery is already
+        // running, append one follow-up so a later queue snapshot is not lost.
+        workManager.enqueueUniqueWork(ACTION_DELIVERY, ACTION_DELIVERY_POLICY, request)
+    }
+
+    override fun enqueueForegroundSync() {
+        val request = syncRequest(SyncWorkIntent.FOREGROUND)
             .addTag(CANCELLABLE)
             .setConstraints(network)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        // An action can arrive after a running worker has already pushed its
-        // mutation snapshot. Append a follow-up instead of silently dropping
-        // that wake-up; Room coalescing makes the follow-up cheap when the
-        // running worker did include the latest intent.
-        workManager.enqueueUniqueWork(IMMEDIATE, IMMEDIATE_WORK_POLICY, request)
+        workManager.enqueueUniqueWork(FULL_SYNC, ExistingWorkPolicy.KEEP, request)
     }
 
     override fun enqueueUserSync() {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .addTag(SYNC_WORK)
+        val request = syncRequest(SyncWorkIntent.USER_SYNC)
             .addTag(CANCELLABLE)
             .addTag(USER_INITIATED)
             .setConstraints(network)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        workManager.enqueueUniqueWork(IMMEDIATE, ExistingWorkPolicy.REPLACE, request)
+        workManager.enqueueUniqueWork(FULL_SYNC, ExistingWorkPolicy.REPLACE, request)
     }
 
     override fun enqueueManualRefresh() {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .addTag(SYNC_WORK)
+        val request = syncRequest(SyncWorkIntent.MANUAL_REFRESH)
             .addTag(CANCELLABLE)
             .addTag(USER_INITIATED)
-            .setInputData(androidx.work.workDataOf(SyncWorker.MANUAL_REFRESH to true))
             .setConstraints(network)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        workManager.enqueueUniqueWork(IMMEDIATE, ExistingWorkPolicy.REPLACE, request)
+        workManager.enqueueUniqueWork(FULL_SYNC, ExistingWorkPolicy.REPLACE, request)
     }
 
     override fun cancelImmediate() {
-        workManager.cancelUniqueWork(IMMEDIATE)
+        workManager.cancelUniqueWork(FULL_SYNC)
     }
 
     override fun cancelAll() {
         workManager.cancelAllWorkByTag(SYNC_WORK)
+        workManager.cancelAllWorkByTag(SYNC_CONTROL_WORK)
     }
 
     override fun ensurePeriodic() {
-        val request = PeriodicWorkRequestBuilder<SyncWorker>(30, TimeUnit.MINUTES)
+        val request = PeriodicWorkRequestBuilder<SyncWorker>(
+            30, TimeUnit.MINUTES,
+            15, TimeUnit.MINUTES,
+        )
             .addTag(SYNC_WORK)
             .addTag(BACKGROUND_SCHEDULED)
+            .setInputData(SyncWorkIntent.PERIODIC.asInputData())
             .setInitialDelay(30, TimeUnit.MINUTES)
-            .setConstraints(network)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .setConstraints(periodicNetwork)
             .build()
-        workManager.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
+        // Versioning applies the new constraints once; KEEP then avoids a
+        // periodic-work update on every process start.
+        workManager.cancelUniqueWork(LEGACY_PERIODIC)
+        workManager.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
     }
     fun enqueueRefreshFollowUp() {
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .addTag(SYNC_WORK)
+        val request = syncRequest(SyncWorkIntent.REFRESH_FOLLOW_UP)
             .addTag(BACKGROUND_SCHEDULED)
             .setInitialDelay(20, TimeUnit.SECONDS)
             .setConstraints(network)
             .build()
         workManager.enqueueUniqueWork(FOLLOW_UP, ExistingWorkPolicy.REPLACE, request)
     }
+
+    private fun syncRequest(intent: SyncWorkIntent) = OneTimeWorkRequestBuilder<SyncWorker>()
+        .addTag(SYNC_WORK)
+        .setInputData(intent.asInputData())
+
     companion object {
-        const val IMMEDIATE = "brooklet-immediate-sync"
-        const val PERIODIC = "brooklet-periodic-sync"
+        const val FULL_SYNC = "brooklet-full-sync"
+        const val ACTION_DEBOUNCE = "brooklet-action-sync-debounce"
+        const val ACTION_DELIVERY = "brooklet-action-delivery"
+        const val LEGACY_PERIODIC = "brooklet-periodic-sync"
+        const val PERIODIC = "brooklet-periodic-sync-v2"
         const val FOLLOW_UP = "brooklet-refresh-follow-up"
         const val SYNC_WORK = "brooklet-sync-work"
+        const val SYNC_CONTROL_WORK = "brooklet-sync-control-work"
         const val USER_INITIATED = "brooklet-user-initiated-sync"
         const val BACKGROUND_SCHEDULED = "brooklet-background-scheduled-sync"
         const val CANCELLABLE = "brooklet-cancellable-sync"
+        const val ACTION_DEBOUNCE_SECONDS = 2L
     }
 }

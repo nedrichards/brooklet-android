@@ -123,7 +123,10 @@ class InboxUndoJourneyTest {
 
         compose.onNodeWithContentDescription("More actions").performClick()
         compose.onNodeWithText("Mark all read").performClick()
-        compose.waitUntil(5_000) { isRead(1) && isRead(2) }
+        compose.waitUntil(5_000) {
+            isRead(1) && isRead(2) &&
+                savedState.get<LongArray>("inbox-undo-entry-ids")?.toSet() == setOf(1L, 2L)
+        }
 
         val recreated = InboxUndoViewModel(ACCOUNT_ID, repository, savedState)
         assertEquals(setOf(1L, 2L), recreated.uiState.value.pending?.entries?.keys)
@@ -251,7 +254,8 @@ class InboxUndoJourneyTest {
     private class RecordingScheduler : SyncScheduler {
         override val activity = MutableStateFlow(SyncActivity())
         var immediateRequests = 0
-        override fun enqueueImmediate() { immediateRequests += 1 }
+        override fun enqueueActionDelivery() { immediateRequests += 1 }
+        override fun enqueueForegroundSync() = Unit
         override fun enqueueUserSync() = Unit
         override fun enqueueManualRefresh() = Unit
         override fun cancelImmediate() = Unit

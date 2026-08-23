@@ -5,7 +5,9 @@ import com.nedrichards.brooklet.model.RetryClassifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -53,10 +55,11 @@ class MinifluxClient(
         request(Request.Builder().url(url(path)).post(json.encodeToString(value).toRequestBody(JSON)).authenticated().build())
     private suspend fun postEmpty(path: String) = request<Unit>(Request.Builder().url(url(path)).post(ByteArray(0).toRequestBody()).authenticated().build())
 
+    @OptIn(ExperimentalSerializationApi::class)
     private suspend inline fun <reified T> request(request: Request): T = withContext(Dispatchers.IO) {
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw ApiException(response.code, "Miniflux request failed (${response.code})", RetryClassifier.classify(response.code))
-            if (T::class == Unit::class) Unit as T else json.decodeFromString<T>(response.body.string())
+            if (T::class == Unit::class) Unit as T else response.body.byteStream().use { json.decodeFromStream<T>(it) }
         }
     }
     private fun Request.Builder.authenticated() = header("X-Auth-Token", token).header("Accept", "application/json")
@@ -98,7 +101,11 @@ class KarakeepClient(
  * followed: a configured service can be reached at its final HTTPS URL, but a
  * response must never be able to move a credential-bearing request elsewhere.
  */
-internal fun authenticatedHttpClient(): OkHttpClient = OkHttpClient.Builder()
-    .followRedirects(false)
-    .followSslRedirects(false)
-    .build()
+private val sharedAuthenticatedHttpClient by lazy {
+    OkHttpClient.Builder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+}
+
+internal fun authenticatedHttpClient(): OkHttpClient = sharedAuthenticatedHttpClient

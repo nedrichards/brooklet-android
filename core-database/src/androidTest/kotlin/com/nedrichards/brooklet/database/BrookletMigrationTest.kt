@@ -9,17 +9,29 @@ import org.junit.Test
 class BrookletMigrationTest {
     @get:Rule val helper = MigrationTestHelper(
         InstrumentationRegistry.getInstrumentation(),
-        requireNotNull(BrookletDatabase::class.java.canonicalName),
+        BrookletDatabase::class.java,
+        emptyList(),
         FrameworkSQLiteOpenHelperFactory(),
     )
 
-    @Test fun migratesVersion1ToVersion2() {
+    @Test fun migratesVersion1ToCurrent() {
         helper.createDatabase("brooklet-migration-test", 1).close()
         helper.runMigrationsAndValidate(
             "brooklet-migration-test",
-            2,
+            3,
             true,
             BrookletDatabase.MIGRATION_1_2,
+            BrookletDatabase.MIGRATION_2_3,
+        ).close()
+    }
+
+    @Test fun migratesVersion2ToCurrent() {
+        helper.createDatabase("brooklet-migration-test-v2", 2).close()
+        helper.runMigrationsAndValidate(
+            "brooklet-migration-test-v2",
+            3,
+            true,
+            BrookletDatabase.MIGRATION_2_3,
         ).close()
     }
 }

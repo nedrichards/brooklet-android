@@ -38,7 +38,7 @@ class BrookletDaoTest {
         dao.setRead(accountId = 1, entryId = 11, read = false, now = 200)
         assertEquals(listOf(11L), dao.observeInbox(1).first().map { it.id })
         assertFalse(requireNotNull(dao.observeEntry(1, 11).first()).read)
-        assertFalse(dao.observeAllEntries().first().single().read)
+        assertFalse(dao.observeAllEntries(1).first().single().read)
         val mutation = dao.pendingMutations().single()
         assertFalse(mutation.desiredValue)
         assertEquals(200, mutation.createdAt)
@@ -65,7 +65,7 @@ class BrookletDaoTest {
         assertEquals(listOf(12L, 11L), dao.observeInbox(1).first().map { it.id })
         assertEquals(
             mapOf(11L to false, 12L to false, 13L to true),
-            dao.observeAllEntries().first().associate { it.id to it.read },
+            dao.observeAllEntries(1).first().associate { it.id to it.read },
         )
         assertEquals(setOf(11L, 12L), dao.pendingMutations().map { it.entryId }.toSet())
         assertTrue(dao.pendingMutations().all { !it.desiredValue })
@@ -81,6 +81,34 @@ class BrookletDaoTest {
 
         assertEquals(listOf(11L), dao.observeInbox(1).first().map { it.id })
         assertEquals(listOf(22L), dao.observeInbox(2).first().map { it.id })
+    }
+
+    @Test fun entryListsUseAccountAndOrderingIndexesWithoutTemporarySorts() {
+        val inboxPlan = queryPlan(
+            """
+            SELECT e.id FROM entries e
+            WHERE e.accountId = 1 AND e.read = 0
+            ORDER BY e.publishedAt DESC
+            """.trimIndent(),
+        )
+        val libraryPlan = queryPlan(
+            """
+            SELECT e.id FROM entries e
+            WHERE e.accountId = 1
+            ORDER BY e.publishedAt DESC
+            """.trimIndent(),
+        )
+        val feedPlan = queryPlan(
+            """
+            SELECT e.id FROM entries e
+            WHERE e.accountId = 1 AND e.feedId = 2
+            ORDER BY e.publishedAt DESC
+            """.trimIndent(),
+        )
+
+        assertUsesOrderedIndex(inboxPlan, "index_entries_accountId_read_publishedAt")
+        assertUsesOrderedIndex(libraryPlan, "index_entries_accountId_publishedAt")
+        assertUsesOrderedIndex(feedPlan, "index_entries_accountId_feedId_publishedAt")
     }
 
     @Test fun queuedLocalIntentWinsUntilAcknowledged() = runBlocking {
@@ -130,7 +158,7 @@ class BrookletDaoTest {
         dao.setRead(accountId = 1, entryId = 5, read = true, now = 50)
 
         assertEquals(1, dao.pruneReadEntries(accountId = 1, cutoff = 100, keepAtMost = 0))
-        assertEquals(listOf(2L, 3L, 4L, 5L), dao.observeAllEntries().first().map { it.id }.sorted())
+        assertEquals(listOf(2L, 3L, 4L, 5L), dao.observeAllEntries(1).first().map { it.id }.sorted())
     }
 
     @Test fun pruningCannotDeleteSameIdInAnotherAccount() = runBlocking {
@@ -154,6 +182,15 @@ class BrookletDaoTest {
         assertEquals("DIRECT", pending.route)
     }
 
+    @Test fun completedKarakeepReceiptsRetainThirtyDaysFromCompletion() = runBlocking {
+        dao.queueKarakeep(karakeep(title = "Old queue", route = "MINIFLUX"))
+        val id = dao.pendingKarakeep().single().id
+        dao.acknowledgeKarakeep(id, completedAt = 1_000)
+
+        assertEquals(0, dao.pruneCompletedKarakeep(accountId = 1, cutoff = 999))
+        assertEquals(1, dao.pruneCompletedKarakeep(accountId = 1, cutoff = 1_001))
+    }
+
     @Test fun accountDeletionRemovesArticlesAndQueuedActions() = runBlocking {
         dao.upsertAccount(account())
         dao.upsertEntries(listOf(entry(accountId = 1, id = 11, read = false)))
@@ -163,7 +200,7 @@ class BrookletDaoTest {
         dao.deleteAccountAndLocalData(1)
 
         assertNull(dao.account())
-        assertTrue(dao.observeAllEntries().first().isEmpty())
+        assertTrue(dao.observeAllEntries(1).first().isEmpty())
         assertTrue(dao.pendingMutations().isEmpty())
         assertTrue(dao.pendingKarakeep().isEmpty())
     }
@@ -189,7 +226,7 @@ class BrookletDaoTest {
             val reopenedDao = reopened.dao()
 
             assertFalse(requireNotNull(reopenedDao.observeEntry(1, 11).first()).read)
-            assertFalse(reopenedDao.observeAllEntries().first().single().read)
+            assertFalse(reopenedDao.observeAllEntries(1).first().single().read)
             assertFalse(reopenedDao.pendingMutations().single().desiredValue)
         } finally {
             reopened?.close()
@@ -238,4 +275,16 @@ class BrookletDaoTest {
         serverVersion = "2.3.2",
         createdAt = 0,
     )
+
+    private fun queryPlan(sql: String): List<String> =
+        database.openHelper.readableDatabase.query("EXPLAIN QUERY PLAN $sql").use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(3))
+            }
+        }
+
+    private fun assertUsesOrderedIndex(plan: List<String>, index: String) {
+        assertTrue("Expected $index in $plan", plan.any { index in it })
+        assertFalse("Unexpected temporary sort in $plan", plan.any { "USE TEMP B-TREE FOR ORDER BY" in it })
+    }
 }

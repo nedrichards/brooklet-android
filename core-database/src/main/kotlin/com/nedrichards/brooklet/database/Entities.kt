@@ -18,7 +18,11 @@ data class AccountEntity(
 @Entity(tableName = "categories", primaryKeys = ["accountId", "id"], indices = [Index("accountId")])
 data class CategoryEntity(val accountId: Long, val id: Long, val title: String)
 
-@Entity(tableName = "feeds", primaryKeys = ["accountId", "id"], indices = [Index("accountId"), Index("categoryId")])
+@Entity(
+    tableName = "feeds",
+    primaryKeys = ["accountId", "id"],
+    indices = [Index(value = ["accountId", "categoryId"])],
+)
 data class FeedEntity(
     val accountId: Long,
     val id: Long,
@@ -31,7 +35,12 @@ data class FeedEntity(
 @Entity(
     tableName = "entries",
     primaryKeys = ["accountId", "id"],
-    indices = [Index("accountId"), Index("feedId"), Index("read"), Index("starred"), Index("changedAt")],
+    indices = [
+        Index(value = ["accountId", "publishedAt"]),
+        Index(value = ["accountId", "read", "publishedAt"]),
+        Index(value = ["accountId", "starred", "publishedAt"]),
+        Index(value = ["accountId", "feedId", "publishedAt"]),
+    ],
 )
 data class EntryEntity(
     val accountId: Long,
@@ -59,7 +68,11 @@ data class ReaderPositionEntity(val accountId: Long, val entryId: Long, val firs
 @Entity(tableName = "sync_cursors")
 data class SyncCursorEntity(@androidx.room.PrimaryKey val accountId: Long, val changedAfterEpochSeconds: Long, val lastSuccessfulSyncAt: Long)
 
-@Entity(tableName = "pending_mutations", primaryKeys = ["accountId", "entryId", "field"], indices = [Index("createdAt")])
+@Entity(
+    tableName = "pending_mutations",
+    primaryKeys = ["accountId", "entryId", "field"],
+    indices = [Index(value = ["accountId", "createdAt"])],
+)
 data class PendingMutationEntity(
     val accountId: Long,
     val entryId: Long,
@@ -70,7 +83,13 @@ data class PendingMutationEntity(
     val lastError: String? = null,
 )
 
-@Entity(tableName = "pending_karakeep", indices = [Index(value = ["accountId", "canonicalUrl"], unique = true)])
+@Entity(
+    tableName = "pending_karakeep",
+    indices = [
+        Index(value = ["accountId", "canonicalUrl"], unique = true),
+        Index(value = ["accountId", "state", "createdAt"]),
+    ],
+)
 data class PendingKarakeepEntity(
     @androidx.room.PrimaryKey(autoGenerate = true) val id: Long = 0,
     val accountId: Long,
@@ -80,6 +99,7 @@ data class PendingKarakeepEntity(
     val route: String,
     val state: String,
     val createdAt: Long,
+    val completedAt: Long? = null,
     val attemptCount: Int = 0,
     val lastError: String? = null,
 )

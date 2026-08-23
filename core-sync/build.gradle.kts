@@ -14,7 +14,6 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.work.runtime)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(libs.androidx.test.core)

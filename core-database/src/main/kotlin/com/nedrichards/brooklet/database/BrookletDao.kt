@@ -86,9 +86,9 @@ abstract class BrookletDao {
         FROM entries e LEFT JOIN feeds f ON f.accountId=e.accountId AND f.id=e.feedId
         LEFT JOIN categories c ON c.accountId=f.accountId AND c.id=f.categoryId
         LEFT JOIN pending_karakeep k ON k.accountId=e.accountId AND k.entryId=e.id
-        WHERE e.starred = 1 OR k.id IS NOT NULL
+        WHERE e.accountId = :accountId AND (e.starred = 1 OR k.id IS NOT NULL)
         ORDER BY e.publishedAt DESC
-    """) abstract fun observeSaved(): Flow<List<EntryRow>>
+    """) abstract fun observeSaved(accountId: Long): Flow<List<EntryRow>>
 
     @Query("""
         SELECT e.accountId, e.id, e.feedId, COALESCE(f.title, '') AS feedTitle,
@@ -97,8 +97,9 @@ abstract class BrookletDao {
             NULL AS deliveryState, NULL AS deliveryError
         FROM entries e LEFT JOIN feeds f ON f.accountId=e.accountId AND f.id=e.feedId
         LEFT JOIN categories c ON c.accountId=f.accountId AND c.id=f.categoryId
+        WHERE e.accountId = :accountId
         ORDER BY e.publishedAt DESC
-    """) abstract fun observeAllEntries(): Flow<List<EntryRow>>
+    """) abstract fun observeAllEntries(accountId: Long): Flow<List<EntryRow>>
 
     @Query("""
         SELECT e.accountId, e.id, e.feedId, COALESCE(f.title, '') AS feedTitle,
@@ -114,8 +115,12 @@ abstract class BrookletDao {
     abstract fun observeEntry(accountId: Long, entryId: Long): Flow<EntryRow?>
 
     @Query("SELECT * FROM pending_mutations ORDER BY createdAt") abstract suspend fun pendingMutations(): List<PendingMutationEntity>
+    @Query("SELECT * FROM pending_mutations WHERE accountId = :accountId ORDER BY createdAt")
+    abstract suspend fun pendingMutationsForAccount(accountId: Long): List<PendingMutationEntity>
     @Query("SELECT * FROM entries WHERE accountId = :accountId AND id IN (:entryIds)") abstract suspend fun entriesById(accountId: Long, entryIds: List<Long>): List<EntryEntity>
     @Query("SELECT * FROM pending_karakeep WHERE state != 'SAVED' ORDER BY createdAt") abstract suspend fun pendingKarakeep(): List<PendingKarakeepEntity>
+    @Query("SELECT * FROM pending_karakeep WHERE accountId = :accountId AND state != 'SAVED' ORDER BY createdAt")
+    abstract suspend fun pendingKarakeepForAccount(accountId: Long): List<PendingKarakeepEntity>
     @Query("SELECT id FROM pending_karakeep WHERE accountId = :accountId AND canonicalUrl = :canonicalUrl LIMIT 1")
     protected abstract suspend fun karakeepId(accountId: Long, canonicalUrl: String): Long?
     @Query("SELECT * FROM sync_cursors WHERE accountId = :accountId") abstract suspend fun cursor(accountId: Long): SyncCursorEntity?
@@ -165,7 +170,7 @@ abstract class BrookletDao {
     open suspend fun mergeRemoteEntries(accountId: Long, remote: List<EntryEntity>) {
         if (remote.isEmpty()) return
         val local = entriesById(accountId, remote.map { it.id }).associateBy { it.id }
-        val pending = pendingMutations().filter { it.accountId == accountId }.groupBy { it.entryId }
+        val pending = pendingMutationsForAccount(accountId).groupBy { it.entryId }
         upsertEntries(remote.map { incoming ->
             val existing = local[incoming.id]
             val fields = pending[incoming.id].orEmpty().map { it.field }.toSet()
@@ -181,9 +186,12 @@ abstract class BrookletDao {
     abstract suspend fun acknowledgeMutations(accountId: Long, entryIds: List<Long>, field: String, desiredValue: Boolean)
     @Query("UPDATE pending_mutations SET attemptCount = attemptCount + 1, lastError = :message WHERE accountId = :accountId AND entryId = :entryId AND field = :field")
     abstract suspend fun recordMutationFailure(accountId: Long, entryId: Long, field: String, message: String)
-    @Query("UPDATE pending_karakeep SET state = 'SAVED', lastError = NULL WHERE id = :id") abstract suspend fun acknowledgeKarakeep(id: Long)
+    @Query("UPDATE pending_karakeep SET state = 'SAVED', completedAt = :completedAt, lastError = NULL WHERE id = :id")
+    abstract suspend fun acknowledgeKarakeep(id: Long, completedAt: Long)
     @Query("UPDATE pending_karakeep SET attemptCount = attemptCount + 1, state = :state, lastError = :message WHERE id = :id")
     abstract suspend fun recordKarakeepFailure(id: Long, state: String, message: String)
+    @Query("DELETE FROM pending_karakeep WHERE accountId = :accountId AND state = 'SAVED' AND completedAt < :cutoff")
+    abstract suspend fun pruneCompletedKarakeep(accountId: Long, cutoff: Long): Int
 
     @Query("""
         DELETE FROM entries WHERE accountId = :accountId AND id IN (

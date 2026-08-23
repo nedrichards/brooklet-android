@@ -31,10 +31,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -42,6 +44,8 @@ import com.nedrichards.brooklet.designsystem.BrookletHeadlineRow
 import com.nedrichards.brooklet.model.Category
 import com.nedrichards.brooklet.model.Entry
 import com.nedrichards.brooklet.model.Feed
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private enum class EntryScope { ALL, UNREAD, READ }
 
@@ -51,7 +55,7 @@ fun LibraryScreen(
     categories: List<Category>,
     feeds: List<Feed>,
     padding: PaddingValues,
-    onOpen: (Entry) -> Unit,
+    onOpen: (Entry, List<Entry>) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var categoryId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -67,9 +71,11 @@ fun LibraryScreen(
     }
     BackHandler(enabled = query.isBlank() && nested, onBack = goBack)
 
-    val searched = remember(entries, query) {
-        if (query.isBlank()) emptyList() else entries.filter {
-            it.title.contains(query, true) || it.feedTitle.contains(query, true) || it.author?.contains(query, true) == true
+    val searched by produceState(initialValue = emptyList<Entry>(), entries, query) {
+        value = if (query.isBlank()) emptyList() else withContext(Dispatchers.Default) {
+            entries.filter {
+                it.title.contains(query, true) || it.feedTitle.contains(query, true) || it.author?.contains(query, true) == true
+            }
         }
     }
     val visibleEntries = remember(entries, feedId, scope) {
@@ -81,6 +87,12 @@ fun LibraryScreen(
             else -> emptyList()
         }
     }
+    val feedEntryCounts = remember(entries) { entries.groupingBy { it.feedId }.eachCount() }
+    val feedsByCategory = remember(feeds) { feeds.groupBy { it.categoryId } }
+    val categoryEntryCounts = remember(feedEntryCounts, feedsByCategory) {
+        feedsByCategory.mapValues { (_, values) -> values.sumOf { feedEntryCounts[it.id] ?: 0 } }
+    }
+    val unreadCount = remember(entries) { entries.count { !it.read } }
 
     Column(Modifier.fillMaxSize().padding(padding)) {
         TextField(
@@ -95,7 +107,7 @@ fun LibraryScreen(
         )
 
         when {
-            query.isNotBlank() -> EntryResults(searched, "No cached articles match", onOpen)
+            query.isNotBlank() -> EntryResults(searched, "No cached articles match") { onOpen(it, searched) }
             feedId != null || scope != null -> {
                 LibraryBreadcrumb(
                     title = feedId?.let { id -> feeds.firstOrNull { it.id == id }?.title } ?: when (scope) {
@@ -106,42 +118,52 @@ fun LibraryScreen(
                     },
                     onBack = goBack,
                 )
-                EntryResults(visibleEntries, "No cached articles here", onOpen)
+                EntryResults(visibleEntries, "No cached articles here") { onOpen(it, visibleEntries) }
             }
             categoryId != null -> {
                 val category = categories.firstOrNull { it.id == categoryId }
                 LibraryBreadcrumb(category?.title ?: "Category", goBack)
-                val categoryFeeds = feeds.filter { it.categoryId == categoryId }
+                val categoryFeeds = feedsByCategory[categoryId].orEmpty()
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(categoryFeeds, key = { it.id }) { feed ->
-                        LibraryNavRow(Icons.Rounded.RssFeed, feed.title, "${entries.count { it.feedId == feed.id }} cached") { feedId = feed.id }
+                        LibraryNavRow(Icons.Rounded.RssFeed, feed.title, "${feedEntryCounts[feed.id] ?: 0} cached") { feedId = feed.id }
                     }
                 }
             }
-            else -> LibraryRoot(entries, categories, feeds, onScope = { scope = it }, onCategory = { categoryId = it })
+            else -> LibraryRoot(
+                entryCount = entries.size,
+                unreadCount = unreadCount,
+                categories = categories,
+                feedsByCategory = feedsByCategory,
+                categoryEntryCounts = categoryEntryCounts,
+                onScope = { scope = it },
+                onCategory = { categoryId = it },
+            )
         }
     }
 }
 
 @Composable
 private fun LibraryRoot(
-    entries: List<Entry>,
+    entryCount: Int,
+    unreadCount: Int,
     categories: List<Category>,
-    feeds: List<Feed>,
+    feedsByCategory: Map<Long, List<Feed>>,
+    categoryEntryCounts: Map<Long, Int>,
     onScope: (EntryScope) -> Unit,
     onCategory: (Long) -> Unit,
 ) = LazyColumn(Modifier.fillMaxSize()) {
     item { LibraryLabel("Browse") }
-    item { LibraryNavRow(Icons.AutoMirrored.Rounded.LibraryBooks, "All articles", "${entries.size} cached") { onScope(EntryScope.ALL) } }
-    item { LibraryNavRow(Icons.Rounded.MarkEmailUnread, "Unread", "${entries.count { !it.read }} articles") { onScope(EntryScope.UNREAD) } }
-    item { LibraryNavRow(Icons.Rounded.MarkEmailRead, "Read", "${entries.count { it.read }} articles") { onScope(EntryScope.READ) } }
+    item { LibraryNavRow(Icons.AutoMirrored.Rounded.LibraryBooks, "All articles", "$entryCount cached") { onScope(EntryScope.ALL) } }
+    item { LibraryNavRow(Icons.Rounded.MarkEmailUnread, "Unread", "$unreadCount articles") { onScope(EntryScope.UNREAD) } }
+    item { LibraryNavRow(Icons.Rounded.MarkEmailRead, "Read", "${entryCount - unreadCount} articles") { onScope(EntryScope.READ) } }
     item { LibraryLabel("Categories") }
     items(categories, key = { it.id }) { category ->
-        val categoryFeedIds = feeds.filter { it.categoryId == category.id }.mapTo(HashSet()) { it.id }
+        val categoryFeedCount = feedsByCategory[category.id]?.size ?: 0
         LibraryNavRow(
             Icons.Rounded.Folder,
             category.title,
-            "${categoryFeedIds.size} feeds · ${entries.count { it.feedId in categoryFeedIds }} cached",
+            "$categoryFeedCount feeds · ${categoryEntryCounts[category.id] ?: 0} cached",
         ) { onCategory(category.id) }
     }
 }
@@ -184,13 +206,14 @@ private fun EntryResults(entries: List<Entry>, emptyText: String, onOpen: (Entry
     if (entries.isEmpty()) {
         Text(emptyText, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
     } else {
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize().testTag("entry-list")) {
             items(entries, key = { it.id }) { entry ->
                 BrookletHeadlineRow(
                     title = entry.title,
                     metadata = listOf(entry.feedTitle, if (entry.read) "Read" else "Unread").filter(String::isNotBlank).joinToString(" · "),
                     onClick = { onOpen(entry) },
                     isUnread = !entry.read,
+                    modifier = Modifier.testTag("entry-${entry.id}"),
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
             }

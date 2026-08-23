@@ -15,10 +15,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,18 +32,36 @@ import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.ReportDrawnWhen
+import com.nedrichards.brooklet.database.AccountEntity
 import com.nedrichards.brooklet.sync.SyncActivity
 import com.nedrichards.brooklet.sync.SyncActivityState
 
 @Composable
 fun BrookletApp(sharedUrl: String? = null, onSharedUrlHandled: () -> Unit = {}) {
     val application = LocalContext.current.applicationContext as BrookletApplication
-    val account by application.database.dao().observeAccount().collectAsStateWithLifecycle(initialValue = null)
-    Surface(Modifier.fillMaxSize()) {
-        if (account == null) SetupScreen(application)
-        else if (sharedUrl != null) SubscribeScreen(application, account!!.id, sharedUrl, onDismiss = onSharedUrlHandled)
-        else InitialSyncGate(application, account!!.id)
+    val accountState by produceState<AccountLoadState>(AccountLoadState.Loading, application) {
+        application.database.dao().observeAccount().collect { account ->
+            value = AccountLoadState.Loaded(account)
+        }
     }
+    ReportDrawnWhen { accountState is AccountLoadState.Loaded }
+    Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+        when (val state = accountState) {
+            AccountLoadState.Loading -> FullScreenProgress()
+            is AccountLoadState.Loaded -> {
+                val account = state.account
+                if (account == null) SetupScreen(application)
+                else if (sharedUrl != null) SubscribeScreen(application, account.id, sharedUrl, onDismiss = onSharedUrlHandled)
+                else InitialSyncGate(application, account.id)
+            }
+        }
+    }
+}
+
+private sealed interface AccountLoadState {
+    data object Loading : AccountLoadState
+    data class Loaded(val account: AccountEntity?) : AccountLoadState
 }
 
 @Composable
@@ -54,7 +75,10 @@ private fun InitialSyncGate(application: BrookletApplication, accountId: Long) {
     LaunchedEffect(accountId) {
         if (!foregroundSyncRequested) {
             foregroundSyncRequested = true
-            application.scheduler.enqueueImmediate()
+            val latest = application.database.dao().cursor(accountId)?.lastSuccessfulSyncAt
+            if (latest == null || latest < System.currentTimeMillis() - FOREGROUND_SYNC_MAX_AGE_MS) {
+                application.scheduler.enqueueForegroundSync()
+            }
         }
     }
     // Each fetched page is committed independently. Let the user start reading as
@@ -134,6 +158,8 @@ private fun InitialSyncGate(application: BrookletApplication, accountId: Long) {
         }
     }
 }
+
+private const val FOREGROUND_SYNC_MAX_AGE_MS = 5L * 60 * 1000
 
 private fun syncLabel(phase: String?): String = when (phase) {
     "CONNECTING" -> "Connecting to Miniflux…"

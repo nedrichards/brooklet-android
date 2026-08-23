@@ -5,37 +5,60 @@ import java.io.IOException
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /** Fetches transient reader images. The client has no disk cache. */
 class ArticleImageClient(
     private val http: OkHttpClient = untrustedImageHttpClient(),
 ) {
-    suspend fun load(url: String): ByteArray = withContext(Dispatchers.IO) {
+    suspend fun load(url: String): ByteArray = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder().url(safeImageUrl(url)).get().build()
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("Image request failed (${response.code})")
-            val body = response.body
-            if (body.contentLength() > MAX_IMAGE_BYTES) throw IOException("Image is too large")
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            body.byteStream().use { input ->
-                var total = 0
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    total += read
-                    if (total > MAX_IMAGE_BYTES) throw IOException("Image is too large")
-                    output.write(buffer, 0, read)
+        val call = http.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                runCatching {
+                    response.use {
+                        if (!it.isSuccessful) throw IOException("Image request failed (${it.code})")
+                        val body = it.body
+                        val contentLength = body.contentLength()
+                        if (contentLength > MAX_IMAGE_BYTES) throw IOException("Image is too large")
+                        val initialSize = contentLength.takeIf { length -> length in 1..MAX_IMAGE_BYTES }
+                            ?.toInt() ?: DEFAULT_BUFFER_SIZE
+                        val output = ExactByteArrayOutputStream(initialSize)
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        body.byteStream().use { input ->
+                            var total = 0
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                total += read
+                                if (total > MAX_IMAGE_BYTES) throw IOException("Image is too large")
+                                output.write(buffer, 0, read)
+                            }
+                        }
+                        output.takeBytes()
+                    }
+                }.onSuccess { bytes ->
+                    if (continuation.isActive) continuation.resume(bytes)
+                }.onFailure { error ->
+                    if (continuation.isActive) continuation.resumeWithException(error)
                 }
             }
-            output.toByteArray()
-        }
+        })
     }
 
     private companion object {
@@ -43,16 +66,24 @@ class ArticleImageClient(
     }
 }
 
+private class ExactByteArrayOutputStream(initialSize: Int) : ByteArrayOutputStream(initialSize) {
+    fun takeBytes(): ByteArray = if (count == buf.size) buf else buf.copyOf(count)
+}
+
 /**
  * Article HTML is untrusted input. Images must not turn Brooklet into a probe
  * for services on the device's local network. The resolver's returned address
  * list is what OkHttp connects to, so validating it also covers DNS rebinding.
  */
-internal fun untrustedImageHttpClient(): OkHttpClient = OkHttpClient.Builder()
-    .dns(PublicInternetDns)
-    .followRedirects(false)
-    .followSslRedirects(false)
-    .build()
+private val sharedUntrustedImageHttpClient by lazy {
+    OkHttpClient.Builder()
+        .dns(PublicInternetDns)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+}
+
+internal fun untrustedImageHttpClient(): OkHttpClient = sharedUntrustedImageHttpClient
 
 internal fun safeImageUrl(value: String): HttpUrl = MinifluxClient.requireHttps(value).also { url ->
     url.host.takeIf(::looksLikeIpLiteral)?.let { host ->

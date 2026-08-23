@@ -8,7 +8,7 @@ android {
     compileSdk = 37
     compileSdkMinor = 1
     defaultConfig { minSdk = 28 }
-    sourceSets { getByName("androidTest").assets.srcDir("schemas") }
+    sourceSets { getByName("androidTest").assets.directories.add("schemas") }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
 kotlin { jvmToolchain(17) }

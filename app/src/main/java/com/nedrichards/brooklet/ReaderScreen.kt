@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.util.LruCache
 import android.text.SpannableStringBuilder
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -18,6 +19,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -72,6 +74,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,11 +87,20 @@ import com.nedrichards.brooklet.network.ArticleImageClient
 import com.nedrichards.brooklet.sync.EntryRepository
 import java.net.URI
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val articleImages by lazy { ArticleImageClient() }
+private val articleImageCache by lazy {
+    val maxMemoryKiB = (Runtime.getRuntime().maxMemory() / 1024).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    val cacheSizeKiB = (maxMemoryKiB / 16).coerceIn(8 * 1024, 32 * 1024)
+    object : LruCache<String, ImageBitmap>(cacheSizeKiB) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int =
+            ((value.width.toLong() * value.height * 4) / 1024).coerceAtLeast(1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,6 +108,7 @@ fun ReaderScreen(
     accountId: Long,
     entryId: Long,
     repository: EntryRepository,
+    savePosition: (block: Int, offset: Int) -> Unit,
     onBack: () -> Unit,
     onKeptUnread: () -> Unit,
     onPrevious: (() -> Unit)?,
@@ -107,8 +121,15 @@ fun ReaderScreen(
     val context = LocalContext.current
     val online = rememberOnlineState()
     MarkEntryReadOnOpen(entryId, entry?.id, entry?.read) { repository.markRead(accountId, entryId, true) }
-    LaunchedEffect(entryId, position) { position?.let { listState.scrollToItem(it.firstVisibleBlock, it.offsetPx) } }
-    DisposableEffect(entryId) { onDispose { scope.launch { repository.savePosition(accountId, entryId, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) } } }
+    LaunchedEffect(entryId, position?.entryId, position?.updatedAt) {
+        val saved = position?.takeIf { it.entryId == entryId }
+        listState.scrollToItem(saved?.firstVisibleBlock ?: 0, saved?.offsetPx ?: 0)
+    }
+    DisposableEffect(entryId) {
+        onDispose {
+            savePosition(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+        }
+    }
 
     val current = entry ?: return FullScreenProgress()
     Scaffold(
@@ -130,7 +151,10 @@ fun ReaderScreen(
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-        LazyColumn(Modifier.widthIn(max = 760.dp).fillMaxWidth().align(Alignment.TopCenter), state = listState) {
+        LazyColumn(
+            Modifier.widthIn(max = 760.dp).fillMaxWidth().align(Alignment.TopCenter).testTag("reader-content"),
+            state = listState,
+        ) {
             item {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
                     Text(current.title, style = MaterialTheme.typography.headlineSmall)
@@ -232,11 +256,12 @@ internal fun RichArticleText(html: String?, fallback: String, modifier: Modifier
     } else {
         val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
         val linkColor = MaterialTheme.colorScheme.primary.toArgb()
+        val rendered = remember(html) { themeSafeArticleText(html) }
         AndroidView(
             modifier = modifier,
             factory = { context -> TextView(context).apply { movementMethod = LinkMovementMethod.getInstance() } },
             update = { view ->
-                configureRichArticleText(view, html, style.fontSize.value, textColor, linkColor)
+                configureRichArticleText(view, html, rendered, style.fontSize.value, textColor, linkColor)
             },
         )
     }
@@ -249,7 +274,21 @@ internal fun configureRichArticleText(
     textColor: Int,
     linkColor: Int,
 ) {
-    view.text = themeSafeArticleText(html)
+    configureRichArticleText(view, html, themeSafeArticleText(html), textSizeSp, textColor, linkColor)
+}
+
+private fun configureRichArticleText(
+    view: TextView,
+    html: String,
+    rendered: SpannableStringBuilder,
+    textSizeSp: Float,
+    textColor: Int,
+    linkColor: Int,
+) {
+    if (view.tag != html) {
+        view.text = rendered
+        view.tag = html
+    }
     view.textSize = textSizeSp
     view.setTextColor(textColor)
     view.setLinkTextColor(linkColor)
@@ -298,18 +337,28 @@ private fun absoluteWebHref(tag: String): String? {
 @Composable
 private fun OnlineArticleImage(block: DocumentBlock.Image, articleUrl: String, online: Boolean) {
     val resolvedUrl = remember(block.url, articleUrl) { resolveImageUrl(articleUrl, block.url) }
-    var bitmap by remember(resolvedUrl) { mutableStateOf<ImageBitmap?>(null) }
+    var bitmap by remember(resolvedUrl) { mutableStateOf(resolvedUrl?.let(articleImageCache::get)) }
     var loading by remember(resolvedUrl) { mutableStateOf(false) }
     var failed by remember(resolvedUrl) { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxWidth().testTag("article-image")) {
+    val density = LocalDensity.current
+    val targetSizePx = remember(maxWidth, density) {
+        with(density) { maxWidth.roundToPx() }.coerceIn(720, 1600)
+    }
 
-    LaunchedEffect(resolvedUrl, online) {
+    LaunchedEffect(resolvedUrl, online, targetSizePx) {
         if (resolvedUrl == null || !online || bitmap != null) return@LaunchedEffect
         loading = true
         failed = false
-        bitmap = runCatching {
+        bitmap = try {
             val bytes = articleImages.load(resolvedUrl)
-            withContext(Dispatchers.Default) { decodeSampledImage(bytes) }
-        }.getOrNull()
+            withContext(Dispatchers.Default) { decodeSampledImage(bytes, targetSizePx) }
+                ?.also { articleImageCache.put(resolvedUrl, it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
         failed = bitmap == null
         loading = false
     }
@@ -345,6 +394,7 @@ private fun OnlineArticleImage(block: DocumentBlock.Image, articleUrl: String, o
             )
         }
     }
+    }
 }
 
 @Composable
@@ -377,12 +427,12 @@ private fun resolveImageUrl(articleUrl: String, imageUrl: String): String? = run
     URI(articleUrl).resolve(imageUrl).toString().takeIf { it.startsWith("https://", ignoreCase = true) }
 }.getOrNull()
 
-private fun decodeSampledImage(bytes: ByteArray): ImageBitmap? {
+private fun decodeSampledImage(bytes: ByteArray, targetSizePx: Int): ImageBitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
     var sample = 1
-    while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
+    while (bounds.outWidth / sample > targetSizePx || bounds.outHeight / sample > targetSizePx) sample *= 2
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
 }

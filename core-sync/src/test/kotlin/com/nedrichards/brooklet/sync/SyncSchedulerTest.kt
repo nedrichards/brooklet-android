@@ -8,8 +8,23 @@ import org.junit.Test
 
 class SyncSchedulerTest {
     @Test
-    fun immediateActionsAlwaysScheduleBehindRunningSync() {
-        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, IMMEDIATE_WORK_POLICY)
+    fun rapidActionsReplaceThePendingDebounce() {
+        assertEquals(ExistingWorkPolicy.REPLACE, ACTION_DEBOUNCE_POLICY)
+    }
+
+    @Test
+    fun actionArrivingDuringDeliverySchedulesOneFollowUp() {
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, ACTION_DELIVERY_POLICY)
+    }
+
+    @Test
+    fun retryPolicyDependsOnUserIntent() {
+        assertTrue(SyncWorkIntent.ACTION_DELIVERY.retriesTransientFailure)
+        assertTrue(SyncWorkIntent.USER_SYNC.retriesTransientFailure)
+        assertTrue(SyncWorkIntent.MANUAL_REFRESH.retriesTransientFailure)
+        assertFalse(SyncWorkIntent.FOREGROUND.retriesTransientFailure)
+        assertFalse(SyncWorkIntent.PERIODIC.retriesTransientFailure)
+        assertFalse(SyncWorkIntent.REFRESH_FOLLOW_UP.retriesTransientFailure)
     }
 
     @Test

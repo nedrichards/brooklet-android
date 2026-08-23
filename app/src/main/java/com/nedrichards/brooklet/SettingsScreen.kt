@@ -73,7 +73,11 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
             confirmed = it.minifluxIntegrationConfirmed
             endpoint = it.directEndpoint.orEmpty()
         }
-        retention = dao.storagePolicy(accountId)?.retainReadDays ?: 30
+        dao.storagePolicy(accountId)?.let { policy ->
+            // A stored null means "indefinitely"; only a missing policy uses
+            // the 30-day default.
+            retention = policy.retainReadDays
+        }
     }
 
     Box(Modifier.fillMaxSize().padding(padding)) {
