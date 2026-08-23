@@ -1,6 +1,6 @@
 # Brooklet
 
-Brooklet is a phone-first, offline-first Android client for a single Miniflux account. Room is the UI's only source of truth: sync writes remote data into Room, and read/star/Karakeep actions update Room and a durable mutation queue together.
+Brooklet is an opinionated way of reading RSS and Atom feeds using the Miniflux server. It works with Android and is a phone-first and offline-first with an extra integration into Karakeep for bookmarking..
 
 Brooklet is primarily maintained for its author's own use. It is free software:
 fork it, adapt it, and maintain your own version if it is useful to you. There
@@ -14,17 +14,7 @@ see [COPYING](COPYING). The privacy policy is in [PRIVACY.md](PRIVACY.md), and
 the release checklist for the Google Play Data Safety form is in
 [PLAY_DATA_SAFETY.md](PLAY_DATA_SAFETY.md).
 See [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) for the local optimized
-release deployment path.
-
-## Current foundation
-
-- Dense Inbox triage with bidirectional swipe, an accessible Mark read action, and Undo.
-- Reader that marks on open, exposes **Keep unread**, star, Karakeep, share, original, previous/next, and cached native text blocks.
-- Pull to refresh with an unobtrusive new-articles control, plus Android share-sheet support to send a URL to the subscription flow.
-- Saved and searchable Library workspaces, dynamic colour, edge-to-edge layout, and navigation rail adaptation.
-- HTTPS/API-token setup with Miniflux 2.3.2+ validation and Android Keystore encryption.
-- Incremental pull with a 60-second overlap, conflict-aware merges, batched/coalesced offline mutations, exponential WorkManager retry, and protected pruning.
-- Miniflux-mediated or direct Karakeep delivery with durable queue state and canonical-URL deduplication.
+release deployment path. This is not currently released on the play store and may not be.
 
 ## Build
 
