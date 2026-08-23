@@ -74,6 +74,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -170,6 +171,7 @@ internal fun MainShellContent(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val undoUiState by undoViewModel.uiState.collectAsStateWithLifecycle()
+    val mainContentState = rememberSaveableStateHolder()
     BackHandler(enabled = readerId != null) { readerId = null }
     BackHandler(enabled = settingsOpen && readerId == null) { settingsOpen = false }
 
@@ -233,7 +235,9 @@ internal fun MainShellContent(
     val markAllRead = { undoViewModel.markAllRead(inbox) }
     val open: (Entry, List<Entry>) -> Unit = { entry, list -> readerOrder = list.map { it.id }; readerId = entry.id }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // The reader temporarily replaces the originating workspace. Retain that
+    // workspace's list cursor, search, and browse scope until it returns.
+    mainContentState.SaveableStateProvider("main-content") { BoxWithConstraints(Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 600.dp
         Row(Modifier.fillMaxSize()) {
             if (useRail && !settingsOpen) AppRail(destination) { destination = it }
@@ -324,7 +328,7 @@ internal fun MainShellContent(
                 }
             }
         }
-    }
+    } }
 }
 
 @Composable private fun AppBar(selected: Destination, select: (Destination) -> Unit) = NavigationBar {

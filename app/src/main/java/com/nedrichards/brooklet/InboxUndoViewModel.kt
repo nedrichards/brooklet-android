@@ -18,13 +18,22 @@ internal data class PendingReadUndo(
 ) {
     val message: String
         get() = when {
-            retry && entries.size == 1 && entries.values.first().isNotBlank() -> "Couldn’t restore “${entries.values.first()}”"
+            retry && entries.size == 1 && entries.values.first().isNotBlank() -> "Couldn’t restore “${entries.values.first().snackbarTitle()}”"
             retry && entries.size == 1 -> "Couldn’t restore article"
             retry -> "Couldn’t restore ${entries.size} articles"
-            entries.size == 1 && entries.values.first().isNotBlank() -> "Marked “${entries.values.first()}” read"
+            entries.size == 1 && entries.values.first().isNotBlank() -> "Marked “${entries.values.first().snackbarTitle()}” read"
             entries.size == 1 -> "Marked article read"
             else -> "Marked ${entries.size} articles read"
         }
+}
+
+private const val SNACKBAR_TITLE_MAX_LENGTH = 48
+
+/** Keep action feedback compact without changing the article's stored title. */
+internal fun String.snackbarTitle(): String {
+    val compact = replace(Regex("\\s+"), " ").trim()
+    if (compact.length <= SNACKBAR_TITLE_MAX_LENGTH) return compact
+    return compact.take(SNACKBAR_TITLE_MAX_LENGTH - 1).trimEnd() + "…"
 }
 
 internal data class InboxUndoUiState(
@@ -102,7 +111,7 @@ internal class InboxUndoViewModel(
         if (entry.accountId != accountId) return
         runCatching { repository.markRead(accountId, entry.id, true) }
             .onSuccess { addPending(mapOf(entry.id to entry.title)) }
-            .onFailure { showError("Couldn’t mark “${entry.title}” read") }
+            .onFailure { showError("Couldn’t mark “${entry.title.snackbarTitle()}” read") }
     }
 
     private suspend fun handleMarkAllRead(entries: List<Entry>) {
@@ -121,7 +130,7 @@ internal class InboxUndoViewModel(
                 clearPending()
                 _uiState.value = _uiState.value.copy(
                     confirmation = if (pending.entries.size == 1 && pending.entries.values.first().isNotBlank()) {
-                        "Restored “${pending.entries.values.first()}” as unread"
+                        "Restored “${pending.entries.values.first().snackbarTitle()}” as unread"
                     } else if (pending.entries.size == 1) {
                         "Restored article as unread"
                     } else {
