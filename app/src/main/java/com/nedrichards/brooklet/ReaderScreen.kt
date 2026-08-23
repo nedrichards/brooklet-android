@@ -3,6 +3,10 @@ package com.nedrichards.brooklet
 import android.content.Intent
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.text.SpannableStringBuilder
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -65,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -82,7 +87,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val articleImages = ArticleImageClient()
+private val articleImages by lazy { ArticleImageClient() }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -221,24 +226,73 @@ private fun DocumentBlockView(block: DocumentBlock, articleUrl: String, online: 
 }
 
 @Composable
-private fun RichArticleText(html: String?, fallback: String, modifier: Modifier, style: androidx.compose.ui.text.TextStyle) {
+internal fun RichArticleText(html: String?, fallback: String, modifier: Modifier, style: androidx.compose.ui.text.TextStyle) {
     if (html == null) {
         Text(fallback, style = style, modifier = modifier)
     } else {
+        val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+        val linkColor = MaterialTheme.colorScheme.primary.toArgb()
         AndroidView(
             modifier = modifier,
             factory = { context -> TextView(context).apply { movementMethod = LinkMovementMethod.getInstance() } },
             update = { view ->
-                // Article markup is untrusted. Keep only absolute web links for
-                // TextView's URLSpan; there is no script, file, intent, or
-                // custom-scheme escape hatch in the reader.
-                val safeHtml = html.replace(Regex("(?i)\\s+href\\s*=\\s*(['\"])(?!https?://)[^'\"]*\\1"), "")
-                view.text = HtmlCompat.fromHtml(safeHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                view.textSize = style.fontSize.value
-                view.setTextColor(android.graphics.Color.BLACK)
+                configureRichArticleText(view, html, style.fontSize.value, textColor, linkColor)
             },
         )
     }
+}
+
+internal fun configureRichArticleText(
+    view: TextView,
+    html: String,
+    textSizeSp: Float,
+    textColor: Int,
+    linkColor: Int,
+) {
+    view.text = themeSafeArticleText(html)
+    view.textSize = textSizeSp
+    view.setTextColor(textColor)
+    view.setLinkTextColor(linkColor)
+    view.setBackgroundColor(Color.TRANSPARENT)
+}
+
+/**
+ * Retains only the inline structure Brooklet intentionally supports. Feed HTML
+ * is not allowed to choose foreground/background colours because those values
+ * commonly assume a white page and become unreadable in the app's dark theme.
+ */
+internal fun themeSafeArticleText(html: String): SpannableStringBuilder {
+    val rendered = SpannableStringBuilder(
+        HtmlCompat.fromHtml(sanitiseInlineArticleHtml(html), HtmlCompat.FROM_HTML_MODE_LEGACY),
+    )
+    rendered.getSpans(0, rendered.length, ForegroundColorSpan::class.java).forEach(rendered::removeSpan)
+    rendered.getSpans(0, rendered.length, BackgroundColorSpan::class.java).forEach(rendered::removeSpan)
+    return rendered
+}
+
+internal fun sanitiseInlineArticleHtml(html: String): String {
+    val withoutActiveContent = html
+        .replace(Regex("(?is)<(script|style)\\b[^>]*>.*?</\\1\\s*>"), "")
+        .replace(Regex("(?is)<!--.*?-->"), "")
+    return Regex("(?is)<(/?)([a-z][a-z0-9]*)(?:\\s[^>]*)?/?>").replace(withoutActiveContent) { match ->
+        val closing = match.groupValues[1] == "/"
+        when (val name = match.groupValues[2].lowercase()) {
+            "strong", "b", "em", "i" -> if (closing) "</$name>" else "<$name>"
+            "code" -> if (closing) "</tt>" else "<tt>"
+            "br" -> if (closing) "" else "<br>"
+            "a" -> when {
+                closing -> "</a>"
+                else -> absoluteWebHref(match.value)?.let { "<a href=\"$it\">" } ?: "<a>"
+            }
+            else -> ""
+        }
+    }
+}
+
+private fun absoluteWebHref(tag: String): String? {
+    val href = Regex("(?is)\\bhref\\s*=\\s*(['\"])(.*?)\\1").find(tag)?.groupValues?.get(2) ?: return null
+    return href.takeIf { it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true) }
+        ?.replace("\"", "&quot;")
 }
 
 @Composable
