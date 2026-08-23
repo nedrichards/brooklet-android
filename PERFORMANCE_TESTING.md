@@ -24,3 +24,31 @@ compilation has happened; this does not mean that APK installation failed.
 
 Use the debug variant for ordinary Run/Debug sessions. Do not upload a
 debug-signed APK or this local `local.properties` setting to Google Play.
+
+## Baseline Profile and Macrobenchmark
+
+The `baseline-profile` module contains Brooklet-specific startup, inbox-scroll,
+reader-open, swipe-and-undo, and image-heavy-reader journeys. Use a spare or
+snapshotted API 33+ device: these tasks install the production application ID
+and can replace an existing Brooklet installation if its signing key matches.
+
+Generate and copy the profile into the release source set with:
+
+```sh
+ANDROID_SERIAL=<device-serial> ./gradlew :app-phone:generateReleaseBaselineProfile
+```
+
+Run the cold-start comparison and interaction frame benchmarks with:
+
+```sh
+ANDROID_SERIAL=<device-serial> ./gradlew \
+  :baseline-profile:connectedBenchmarkReleaseAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.nedrichards.brooklet.baselineprofile.StartupBenchmark
+```
+
+On a clean device only the startup journey is meaningful. Configure the
+benchmark device with a Miniflux account and cached entries before generating
+the full profile; the image journey also needs at least one cached read article
+containing an image. Keep generated profiles in source control only after
+comparing `CompilationMode.None` with the Baseline Profile result on physical
+hardware.

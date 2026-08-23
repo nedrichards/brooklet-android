@@ -38,6 +38,7 @@ include(
     ":core-sync",
     ":core-designsystem",
     ":core-testing",
+    ":baseline-profile",
 )
 
 project(":app-phone").projectDir = file("app")

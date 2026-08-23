@@ -2,6 +2,7 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.androidx.baselineprofile)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -69,6 +70,7 @@ android {
 kotlin { jvmToolchain(17) }
 
 dependencies {
+    baselineProfile(project(":baseline-profile"))
     implementation(project(":core-model"))
     implementation(project(":core-database"))
     implementation(project(":core-network"))
