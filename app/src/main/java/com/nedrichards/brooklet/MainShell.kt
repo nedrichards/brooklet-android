@@ -67,6 +67,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -86,10 +87,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.CircleShape
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nedrichards.brooklet.model.Entry
 import com.nedrichards.brooklet.model.DeliveryState
 import com.nedrichards.brooklet.designsystem.BrookletHeadlineRow
 import com.nedrichards.brooklet.sync.SyncActivityState
+import com.nedrichards.brooklet.sync.EntryRepository
+import com.nedrichards.brooklet.sync.SyncScheduler
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
@@ -102,87 +109,128 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainShell(application: BrookletApplication, accountId: Long) {
+    val undoFactory = remember(accountId, application.repository) {
+        viewModelFactory {
+            initializer {
+                InboxUndoViewModel(
+                    accountId = accountId,
+                    repository = application.repository,
+                    savedStateHandle = createSavedStateHandle(),
+                )
+            }
+        }
+    }
+    val undoViewModel: InboxUndoViewModel = viewModel(
+        key = "inbox-undo-$accountId",
+        factory = undoFactory,
+    )
+    MainShellContent(
+        application = application,
+        accountId = accountId,
+        repository = application.repository,
+        scheduler = application.scheduler,
+        undoViewModel = undoViewModel,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun MainShellContent(
+    application: BrookletApplication,
+    accountId: Long,
+    repository: EntryRepository,
+    scheduler: SyncScheduler,
+    undoViewModel: InboxUndoViewModel,
+) {
     var destination by rememberSaveable { mutableStateOf(Destination.INBOX) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var inboxActionsOpen by remember { mutableStateOf(false) }
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
     var readerOrder by remember { mutableStateOf(emptyList<Long>()) }
-    val inbox by application.repository.inbox(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val inbox by repository.inbox(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     val savedState = if (destination == Destination.SAVED) {
-        application.repository.saved.collectAsStateWithLifecycle(initialValue = emptyList())
+        repository.saved.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val allState = if (destination == Destination.LIBRARY) {
-        application.repository.allEntries.collectAsStateWithLifecycle(initialValue = emptyList())
+        repository.allEntries.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val categoriesState = if (destination == Destination.LIBRARY) {
-        application.repository.categories(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        repository.categories(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val feedsState = if (destination == Destination.LIBRARY) {
-        application.repository.feeds(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        repository.feeds(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val saved by savedState
     val all by allState
     val categories by categoriesState
     val feeds by feedsState
-    val syncActivity by application.scheduler.activity.collectAsStateWithLifecycle(
+    val syncActivity by scheduler.activity.collectAsStateWithLifecycle(
         initialValue = com.nedrichards.brooklet.sync.SyncActivity(),
     )
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val undoUiState by undoViewModel.uiState.collectAsStateWithLifecycle()
     BackHandler(enabled = readerId != null) { readerId = null }
     BackHandler(enabled = settingsOpen && readerId == null) { settingsOpen = false }
 
-    if (readerId != null) {
-        ReaderScreen(
-            accountId = accountId,
-            entryId = readerId!!,
-            repository = application.repository,
-            onBack = { readerId = null },
-            onKeptUnread = {
-                readerId = null
-                scope.launch {
-                    snackbar.showSnackbar(
-                        message = "Kept unread",
-                        withDismissAction = true,
-                        duration = SnackbarDuration.Short,
-                    )
-                }
-            },
-            onPrevious = readerOrder.before(readerId!!)?.let { { readerId = it } },
-            onNext = readerOrder.after(readerId!!)?.let { { readerId = it } },
+    LaunchedEffect(undoUiState.pending?.generation) {
+        val pending = undoUiState.pending ?: return@LaunchedEffect
+        snackbar.currentSnackbarData?.dismiss()
+        val result = snackbar.showSnackbar(
+            message = pending.message,
+            actionLabel = if (pending.retry) "Retry" else "Undo",
+            withDismissAction = true,
+            duration = SnackbarDuration.Long,
         )
+        if (result == SnackbarResult.ActionPerformed) undoViewModel.undo()
+        else undoViewModel.dismiss(pending.generation)
+    }
+    LaunchedEffect(undoUiState.confirmation) {
+        val confirmation = undoUiState.confirmation ?: return@LaunchedEffect
+        snackbar.showSnackbar(
+            message = confirmation,
+            withDismissAction = true,
+            duration = SnackbarDuration.Short,
+        )
+        undoViewModel.confirmationShown(confirmation)
+    }
+    LaunchedEffect(undoUiState.error) {
+        val error = undoUiState.error ?: return@LaunchedEffect
+        snackbar.showSnackbar(
+            message = error,
+            withDismissAction = true,
+            duration = SnackbarDuration.Long,
+        )
+        undoViewModel.errorShown(error)
+    }
+
+    if (readerId != null) {
+        Box(Modifier.fillMaxSize()) {
+            ReaderScreen(
+                accountId = accountId,
+                entryId = readerId!!,
+                repository = repository,
+                onBack = { readerId = null },
+                onKeptUnread = {
+                    readerId = null
+                    scope.launch {
+                        snackbar.showSnackbar(
+                            message = "Kept unread",
+                            withDismissAction = true,
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                },
+                onPrevious = readerOrder.before(readerId!!)?.let { { readerId = it } },
+                onNext = readerOrder.after(readerId!!)?.let { { readerId = it } },
+            )
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        }
         return
     }
 
-    val markRead: (Entry) -> Unit = { entry ->
-        scope.launch {
-            application.repository.markRead(entry.accountId, entry.id, true)
-            val result = snackbar.showSnackbar(
-                message = "Marked read",
-                actionLabel = "Undo",
-                // A second, explicit exit is important when the user decides
-                // the change should stand. The Undo action itself dismisses
-                // the snackbar via SnackbarHostState.
-                withDismissAction = true,
-                duration = SnackbarDuration.Short,
-            )
-            if (result == SnackbarResult.ActionPerformed) application.repository.markRead(entry.accountId, entry.id, false)
-        }
-    }
-    val markAllRead = {
-        scope.launch {
-            val ids = application.repository.markAllRead(accountId)
-            if (snackbar.showSnackbar(
-                    message = "Marked ${ids.size} articles read",
-                    actionLabel = "Undo",
-                    withDismissAction = true,
-                    duration = SnackbarDuration.Short,
-                ) == SnackbarResult.ActionPerformed
-            ) {
-                application.repository.restoreUnread(accountId, ids)
-            }
-        }
-    }
+    val markRead: (Entry) -> Unit = undoViewModel::markRead
+    val markAllRead = { undoViewModel.markAllRead(inbox) }
     val open: (Entry, List<Entry>) -> Unit = { entry, list -> readerOrder = list.map { it.id }; readerId = entry.id }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -204,7 +252,7 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
                             if (!settingsOpen) {
                                 when {
                                     syncActivity.isActive && syncActivity.userInitiated -> {
-                                        IconButton(onClick = application.scheduler::cancelImmediate) {
+                                        IconButton(onClick = scheduler::cancelImmediate) {
                                             Icon(Icons.Rounded.Close, "Stop sync")
                                         }
                                     }
@@ -219,7 +267,7 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
                                         }
                                     }
                                     destination != Destination.LIBRARY -> {
-                                        IconButton(onClick = application.scheduler::enqueueUserSync) {
+                                        IconButton(onClick = scheduler::enqueueUserSync) {
                                             Icon(Icons.Rounded.Refresh, "Sync now")
                                         }
                                     }
@@ -252,7 +300,7 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
                     if (!settingsOpen && destination == Destination.LIBRARY &&
                         !(syncActivity.userInitiated && syncActivity.isActive) &&
                         syncActivity.state != SyncActivityState.RUNNING
-                    ) FloatingActionButton(onClick = { application.scheduler.enqueueManualRefresh() }) {
+                    ) FloatingActionButton(onClick = { scheduler.enqueueManualRefresh() }) {
                         Icon(Icons.Rounded.Refresh, "Refresh feeds")
                     }
                 },
@@ -267,7 +315,7 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
                             padding = padding,
                             triage = true,
                             isRefreshing = syncActivity.userInitiated && syncActivity.isActive,
-                            onRefresh = application.scheduler::enqueueUserSync,
+                            onRefresh = scheduler::enqueueUserSync,
                             onRead = markRead,
                         ) { open(it, inbox) }
                         Destination.SAVED -> SavedList(saved, if (syncActivity.isActive) "No saved articles cached yet" else "Nothing saved yet", padding) { open(it, saved) }
