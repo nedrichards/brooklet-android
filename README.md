@@ -20,11 +20,23 @@ the release checklist for the Google Play Data Safety form is in
 See [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) for the local optimized
 release deployment path. This is not currently released on the play store and may not be.
 
-![Saved, to review saved articles](docs/saved-screenshot.png "Application screenshot")
+![Reading an article](docs/article-screenshot.png "Application screenshot")
+
+## Security and privacy model
+
+Brooklet requires HTTPS for configured Miniflux and Karakeep services. Their
+credentials are encrypted by Android Keystore; cached article text and metadata
+remain in the app's local database for offline use. Credential-bearing API
+requests do not follow redirects. Article images are transient, HTTPS-only,
+redirect-free, and cannot resolve to local/private network addresses.
+
+See [PRIVACY.md](PRIVACY.md) for the full data-handling description. This model
+does not protect data from someone who can unlock or compromise the device, or
+from a Miniflux/Karakeep server or article site chosen by the user.
 
 ## Build
 
-The phone application is the `app-phone` Gradle module (stored in `app/` because it is based on the Android CLI template).
+You can build the app using Android Studio or any other Android dev tools. The phone application is the `app-phone` Gradle module.
 
 ```sh
 JAVA_HOME=/path/to/jdk-17 \
@@ -39,31 +51,15 @@ may contain machine-specific paths or private test data.
 
 The first release compiles against API 37.1, targets API 36, and has a minimum API of 28. Article images remain network-only; cached text never waits for them.
 
-For local performance testing, an optimized release APK can be signed with the
-debug certificate by adding this ignored setting to `local.properties`:
+For local performance testing, an optimized release APK can be signed with the debug certificate by adding this ignored setting to `local.properties`:
 
 ```properties
 brooklet.debugSignRelease=true
 ```
 
-Build it with `./gradlew :app-phone:assembleRelease`. This artifact is for local
-testing only and must not be uploaded to Play.
+Build it with `./gradlew :app-phone:assembleRelease`. This artifact is for local testing only and must not be uploaded to Play.
 
-## Security and privacy model
-
-Brooklet requires HTTPS for configured Miniflux and Karakeep services. Their
-credentials are encrypted by Android Keystore; cached article text and metadata
-remain in the app's local database for offline use. Credential-bearing API
-requests do not follow redirects. Article images are transient, HTTPS-only,
-redirect-free, and cannot resolve to local/private network addresses.
-
-See [PRIVACY.md](PRIVACY.md) for the full data-handling description. This model
-does not protect data from someone who can unlock or compromise the device, or
-from a Miniflux/Karakeep server or article site chosen by the user.
-
-## Development checks
-
-Use JDK 17 and a repository-local Gradle cache:
+To run all the development checks Use JDK 17 and a repository-local Gradle cache:
 
 ```sh
 JAVA_HOME=/path/to/jdk-17 \
@@ -72,6 +68,4 @@ GRADLE_USER_HOME="$PWD/.gradle-local" \
   :app-phone:testDebugUnitTest lintDebug :app-phone:assembleDebug
 ```
 
-For the release rehearsal, follow [docs/release.md](docs/release.md). Do not
-commit generated artifacts, local configuration, signing keys, captures, or
-logs.
+For the release rehearsal, follow [docs/release.md](docs/release.md). Do not commit generated artifacts, local configuration, signing keys, captures, or logs.
