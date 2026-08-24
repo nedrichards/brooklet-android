@@ -2,6 +2,7 @@ package com.nedrichards.brooklet
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -55,6 +58,7 @@ fun LibraryScreen(
     categories: List<Category>,
     feeds: List<Feed>,
     padding: PaddingValues,
+    floatingUiBlocked: Boolean = false,
     onOpen: (Entry, List<Entry>) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -93,6 +97,10 @@ fun LibraryScreen(
         feedsByCategory.mapValues { (_, values) -> values.sumOf { feedEntryCounts[it.id] ?: 0 } }
     }
     val unreadCount = remember(entries) { entries.count { !it.read } }
+    val rootListState = rememberLazyListState()
+    val categoryListState = rememberLazyListState()
+    val articleListState = rememberLazyListState()
+    val searchListState = rememberLazyListState()
 
     Column(Modifier.fillMaxSize().padding(padding)) {
         TextField(
@@ -106,38 +114,54 @@ fun LibraryScreen(
             colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
         )
 
-        when {
-            query.isNotBlank() -> EntryResults(searched, "No cached articles match") { onOpen(it, searched) }
-            feedId != null || scope != null -> {
-                LibraryBreadcrumb(
-                    title = feedId?.let { id -> feeds.firstOrNull { it.id == id }?.title } ?: when (scope) {
-                        EntryScope.ALL -> "All articles"
-                        EntryScope.UNREAD -> "Unread articles"
-                        EntryScope.READ -> "Read articles"
-                        null -> "Articles"
-                    },
-                    onBack = goBack,
-                )
-                EntryResults(visibleEntries, "No cached articles here") { onOpen(it, visibleEntries) }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            val activeListState = when {
+                query.isNotBlank() -> searchListState
+                feedId != null || scope != null -> articleListState
+                categoryId != null -> categoryListState
+                else -> rootListState
             }
-            categoryId != null -> {
-                val category = categories.firstOrNull { it.id == categoryId }
-                LibraryBreadcrumb(category?.title ?: "Category", goBack)
-                val categoryFeeds = feedsByCategory[categoryId].orEmpty()
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(categoryFeeds, key = { it.id }) { feed ->
-                        LibraryNavRow(Icons.Rounded.RssFeed, feed.title, "${feedEntryCounts[feed.id] ?: 0} cached") { feedId = feed.id }
+            when {
+                query.isNotBlank() -> EntryResults(searched, "No cached articles match", searchListState) { onOpen(it, searched) }
+                feedId != null || scope != null -> Column {
+                    LibraryBreadcrumb(
+                        title = feedId?.let { id -> feeds.firstOrNull { it.id == id }?.title } ?: when (scope) {
+                            EntryScope.ALL -> "All articles"
+                            EntryScope.UNREAD -> "Unread articles"
+                            EntryScope.READ -> "Read articles"
+                            null -> "Articles"
+                        },
+                        onBack = goBack,
+                    )
+                    EntryResults(visibleEntries, "No cached articles here", articleListState) { onOpen(it, visibleEntries) }
+                }
+                categoryId != null -> Column {
+                    val category = categories.firstOrNull { it.id == categoryId }
+                    LibraryBreadcrumb(category?.title ?: "Category", goBack)
+                    val categoryFeeds = feedsByCategory[categoryId].orEmpty()
+                    LazyColumn(Modifier.fillMaxSize(), state = categoryListState) {
+                        items(categoryFeeds, key = { it.id }) { feed ->
+                            Column(Modifier.animateItem()) {
+                                LibraryNavRow(Icons.Rounded.RssFeed, feed.title, "${feedEntryCounts[feed.id] ?: 0} cached") { feedId = feed.id }
+                            }
+                        }
                     }
                 }
+                else -> LibraryRoot(
+                    entryCount = entries.size,
+                    unreadCount = unreadCount,
+                    categories = categories,
+                    feedsByCategory = feedsByCategory,
+                    categoryEntryCounts = categoryEntryCounts,
+                    listState = rootListState,
+                    onScope = { scope = it },
+                    onCategory = { categoryId = it },
+                )
             }
-            else -> LibraryRoot(
-                entryCount = entries.size,
-                unreadCount = unreadCount,
-                categories = categories,
-                feedsByCategory = feedsByCategory,
-                categoryEntryCounts = categoryEntryCounts,
-                onScope = { scope = it },
-                onCategory = { categoryId = it },
+            ScrollToTopButton(
+                activeListState,
+                Modifier.align(Alignment.BottomCenter),
+                enabled = !floatingUiBlocked,
             )
         }
     }
@@ -150,21 +174,24 @@ private fun LibraryRoot(
     categories: List<Category>,
     feedsByCategory: Map<Long, List<Feed>>,
     categoryEntryCounts: Map<Long, Int>,
+    listState: LazyListState,
     onScope: (EntryScope) -> Unit,
     onCategory: (Long) -> Unit,
-) = LazyColumn(Modifier.fillMaxSize()) {
+) = LazyColumn(Modifier.fillMaxSize(), state = listState) {
     item { LibraryLabel("Browse") }
     item { LibraryNavRow(Icons.AutoMirrored.Rounded.LibraryBooks, "All articles", "$entryCount cached") { onScope(EntryScope.ALL) } }
     item { LibraryNavRow(Icons.Rounded.MarkEmailUnread, "Unread", "$unreadCount articles") { onScope(EntryScope.UNREAD) } }
     item { LibraryNavRow(Icons.Rounded.MarkEmailRead, "Read", "${entryCount - unreadCount} articles") { onScope(EntryScope.READ) } }
     item { LibraryLabel("Categories") }
     items(categories, key = { it.id }) { category ->
-        val categoryFeedCount = feedsByCategory[category.id]?.size ?: 0
-        LibraryNavRow(
-            Icons.Rounded.Folder,
-            category.title,
-            "$categoryFeedCount feeds · ${categoryEntryCounts[category.id] ?: 0} cached",
-        ) { onCategory(category.id) }
+        Column(Modifier.animateItem()) {
+            val categoryFeedCount = feedsByCategory[category.id]?.size ?: 0
+            LibraryNavRow(
+                Icons.Rounded.Folder,
+                category.title,
+                "$categoryFeedCount feeds · ${categoryEntryCounts[category.id] ?: 0} cached",
+            ) { onCategory(category.id) }
+        }
     }
 }
 
@@ -202,20 +229,22 @@ private fun LibraryBreadcrumb(title: String, onBack: () -> Unit) = Row(
 }
 
 @Composable
-private fun EntryResults(entries: List<Entry>, emptyText: String, onOpen: (Entry) -> Unit) {
+private fun EntryResults(entries: List<Entry>, emptyText: String, listState: LazyListState, onOpen: (Entry) -> Unit) {
     if (entries.isEmpty()) {
         Text(emptyText, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
     } else {
-        LazyColumn(Modifier.fillMaxSize().testTag("entry-list")) {
-            items(entries, key = { it.id }) { entry ->
-                BrookletHeadlineRow(
-                    title = entry.title,
-                    metadata = listOf(entry.feedTitle, if (entry.read) "Read" else "Unread").filter(String::isNotBlank).joinToString(" · "),
-                    onClick = { onOpen(entry) },
-                    isUnread = !entry.read,
-                    modifier = Modifier.testTag("entry-${entry.id}"),
-                )
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+        LazyColumn(Modifier.fillMaxSize().testTag("entry-list"), state = listState) {
+            articleItems(entries) { entry ->
+                Column(Modifier.animateItem()) {
+                    BrookletHeadlineRow(
+                        title = entry.title,
+                        metadata = listOf(entry.feedTitle, if (entry.read) "Read" else "Unread").filter(String::isNotBlank).joinToString(" · "),
+                        onClick = { onOpen(entry) },
+                        isUnread = !entry.read,
+                        modifier = Modifier.testTag("entry-${entry.id}"),
+                    )
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                }
             }
         }
     }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -46,6 +46,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MediumTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.NavigationBar
@@ -63,10 +64,12 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -79,9 +82,11 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -99,6 +104,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nedrichards.brooklet.model.Entry
 import com.nedrichards.brooklet.model.DeliveryState
 import com.nedrichards.brooklet.designsystem.BrookletHeadlineRow
+import kotlinx.coroutines.flow.collect
 import com.nedrichards.brooklet.sync.SyncActivityState
 import com.nedrichards.brooklet.sync.EntryRepository
 import com.nedrichards.brooklet.sync.SyncScheduler
@@ -115,6 +121,12 @@ private data class InboxListPosition(
     val entryId: Long,
     val fallbackIndex: Int,
     val scrollOffset: Int,
+)
+
+private data class UndoViewportAnchor(
+    val entryId: Long,
+    val itemOffset: Int,
+    val restoredIds: Set<Long>,
 )
 
 internal fun countNewLeadingInboxEntries(observedIds: Set<Long>?, currentIds: List<Long>): Int =
@@ -186,8 +198,14 @@ internal fun MainShellContent(
     val undoUiState by undoViewModel.uiState.collectAsStateWithLifecycle()
     val mainContentState = rememberSaveableStateHolder()
     val inboxListState = rememberLazyListState()
+    val topAppBarState = rememberTopAppBarState()
+    val topAppBarScrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
+        state = topAppBarState,
+        canScroll = { !settingsOpen },
+    )
     val latestInbox by rememberUpdatedState(inbox)
     var pendingInboxReturn by remember { mutableStateOf<InboxListPosition?>(null) }
+    var pendingUndoViewportAnchor by remember { mutableStateOf<UndoViewportAnchor?>(null) }
     BackHandler(enabled = readerId != null) { readerId = null }
     BackHandler(enabled = settingsOpen && readerId == null) { settingsOpen = false }
 
@@ -200,8 +218,20 @@ internal fun MainShellContent(
             withDismissAction = true,
             duration = SnackbarDuration.Long,
         )
-        if (result == SnackbarResult.ActionPerformed) undoViewModel.undo()
-        else undoViewModel.dismiss(pending.generation)
+        if (result == SnackbarResult.ActionPerformed) {
+            inboxListState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.key is Long && it.key !in pending.entries.keys }
+                ?.let { anchor ->
+                    pendingUndoViewportAnchor = UndoViewportAnchor(
+                        entryId = anchor.key as Long,
+                        itemOffset = anchor.offset,
+                        restoredIds = pending.entries.keys.toSet(),
+                    )
+                }
+            undoViewModel.undo()
+        } else {
+            undoViewModel.dismiss(pending.generation)
+        }
     }
     LaunchedEffect(undoUiState.confirmation) {
         val confirmation = undoUiState.confirmation ?: return@LaunchedEffect
@@ -223,6 +253,7 @@ internal fun MainShellContent(
     }
     val undoFeedbackActive = undoUiState.pending != null ||
         undoUiState.confirmation != null || undoUiState.error != null
+    val floatingUiBlocked = undoFeedbackActive || snackbar.currentSnackbarData != null
     LaunchedEffect(pendingInboxReturn, undoFeedbackActive) {
         val position = pendingInboxReturn ?: return@LaunchedEffect
         // Read-state Undo is the critical action. Wait until its feedback has
@@ -240,13 +271,34 @@ internal fun MainShellContent(
                 .takeIf { it >= 0 }
                 ?: position.fallbackIndex.coerceIn(0, (currentEntries.lastIndex).coerceAtLeast(0))
             if (currentEntries.isNotEmpty()) {
-                inboxListState.animateScrollToItem(targetIndex, position.scrollOffset)
+                inboxListState.animateScrollToItem(
+                    articleLazyListIndex(currentEntries, targetIndex),
+                    position.scrollOffset,
+                )
             }
         }
         pendingInboxReturn = null
     }
     LaunchedEffect(destination) {
         if (destination != Destination.INBOX) pendingInboxReturn = null
+    }
+    LaunchedEffect(pendingUndoViewportAnchor, inbox, destination) {
+        val anchor = pendingUndoViewportAnchor ?: return@LaunchedEffect
+        if (destination != Destination.INBOX || !inbox.map { it.id }.containsAll(anchor.restoredIds)) {
+            return@LaunchedEffect
+        }
+        val anchorIndex = inbox.indexOfFirst { it.id == anchor.entryId }
+        if (anchorIndex < 0) return@LaunchedEffect
+        withFrameNanos { }
+        inboxListState.scrollToItem(
+            index = articleLazyListIndex(inbox, anchorIndex),
+            scrollOffset = -anchor.itemOffset,
+        )
+        pendingUndoViewportAnchor = null
+    }
+    LaunchedEffect(destination, settingsOpen) {
+        topAppBarState.heightOffset = 0f
+        topAppBarState.contentOffset = 0f
     }
 
     if (readerId != null) {
@@ -283,11 +335,11 @@ internal fun MainShellContent(
     val open: (Entry, List<Entry>) -> Unit = { entry, list -> readerOrder = list.map { it.id }; readerId = entry.id }
     val jumpInboxToTop = jump@{
         if (pendingInboxReturn != null) return@jump
-        val index = inboxListState.firstVisibleItemIndex
-        val offset = inboxListState.firstVisibleItemScrollOffset
-        if (index == 0 && offset == 0) return@jump
-        val entryId = inbox.getOrNull(index)?.id ?: return@jump
-        pendingInboxReturn = InboxListPosition(entryId, index, offset)
+        val anchor = inboxListState.layoutInfo.visibleItemsInfo.firstOrNull { it.key is Long } ?: return@jump
+        val entryId = anchor.key as Long
+        val entryIndex = inbox.indexOfFirst { it.id == entryId }.takeIf { it >= 0 } ?: return@jump
+        if (entryIndex == 0 && anchor.offset == 0) return@jump
+        pendingInboxReturn = InboxListPosition(entryId, entryIndex, (-anchor.offset).coerceAtLeast(0))
         scope.launch { inboxListState.animateScrollToItem(0) }
     }
     val selectDestination: (Destination) -> Unit = { selected ->
@@ -295,6 +347,47 @@ internal fun MainShellContent(
             jumpInboxToTop()
         } else {
             destination = selected
+        }
+    }
+    val mainTopBarActions: @Composable RowScope.() -> Unit = {
+        when {
+            syncActivity.isActive && syncActivity.userInitiated -> {
+                IconButton(onClick = scheduler::cancelImmediate) {
+                    Icon(Icons.Rounded.Close, "Stop sync")
+                }
+            }
+            syncActivity.state == SyncActivityState.RUNNING -> {
+                Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp).semantics {
+                            contentDescription = "Syncing in background"
+                        },
+                        strokeWidth = 2.dp,
+                    )
+                }
+            }
+            destination != Destination.LIBRARY -> {
+                IconButton(onClick = scheduler::enqueueUserSync) {
+                    Icon(Icons.Rounded.Refresh, "Sync now")
+                }
+            }
+        }
+        Box {
+            IconButton(onClick = { inboxActionsOpen = true }) {
+                Icon(Icons.Rounded.MoreVert, "More actions")
+            }
+            DropdownMenu(expanded = inboxActionsOpen, onDismissRequest = { inboxActionsOpen = false }) {
+                if (destination == Destination.INBOX && inbox.isNotEmpty()) DropdownMenuItem(
+                    text = { Text("Mark all read") },
+                    leadingIcon = { Icon(Icons.Rounded.DoneAll, null) },
+                    onClick = { inboxActionsOpen = false; markAllRead() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Settings") },
+                    leadingIcon = { Icon(Icons.Rounded.Settings, null) },
+                    onClick = { inboxActionsOpen = false; settingsOpen = true },
+                )
+            }
         }
     }
 
@@ -305,60 +398,24 @@ internal fun MainShellContent(
         Row(Modifier.fillMaxSize()) {
             if (useRail && !settingsOpen) AppRail(destination, selectDestination)
             Scaffold(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
                 topBar = {
-                    Column {
-                    TopAppBar(
-                        title = { Text(if (settingsOpen) "Settings" else destination.label) },
-                        navigationIcon = {
-                            if (settingsOpen) IconButton(onClick = { settingsOpen = false }) {
-                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
-                            }
-                        },
-                        actions = {
-                            if (!settingsOpen) {
-                                when {
-                                    syncActivity.isActive && syncActivity.userInitiated -> {
-                                        IconButton(onClick = scheduler::cancelImmediate) {
-                                            Icon(Icons.Rounded.Close, "Stop sync")
-                                        }
-                                    }
-                                    syncActivity.state == SyncActivityState.RUNNING -> {
-                                        Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(20.dp).semantics {
-                                                    contentDescription = "Syncing in background"
-                                                },
-                                                strokeWidth = 2.dp,
-                                            )
-                                        }
-                                    }
-                                    destination != Destination.LIBRARY -> {
-                                        IconButton(onClick = scheduler::enqueueUserSync) {
-                                            Icon(Icons.Rounded.Refresh, "Sync now")
-                                        }
-                                    }
+                    if (settingsOpen) {
+                        TopAppBar(
+                            title = { Text("Settings") },
+                            navigationIcon = {
+                                IconButton(onClick = { settingsOpen = false }) {
+                                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
                                 }
-                            }
-                            if (!settingsOpen) Box {
-                                IconButton(onClick = { inboxActionsOpen = true }) {
-                                    Icon(Icons.Rounded.MoreVert, "More actions")
-                                }
-                                DropdownMenu(expanded = inboxActionsOpen, onDismissRequest = { inboxActionsOpen = false }) {
-                                    if (destination == Destination.INBOX && inbox.isNotEmpty()) DropdownMenuItem(
-                                        text = { Text("Mark all read") },
-                                        leadingIcon = { Icon(Icons.Rounded.DoneAll, null) },
-                                        onClick = { inboxActionsOpen = false; markAllRead() },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Settings") },
-                                        leadingIcon = { Icon(Icons.Rounded.Settings, null) },
-                                        onClick = { inboxActionsOpen = false; settingsOpen = true },
-                                    )
-                                }
-                            }
-                        },
-                    )
+                            },
+                        )
+                    } else {
+                        MediumTopAppBar(
+                            modifier = Modifier.testTag("main-top-app-bar"),
+                            title = { Text(destination.label) },
+                            actions = mainTopBarActions,
+                            scrollBehavior = topAppBarScrollBehavior,
+                        )
                     }
                 },
                 snackbarHost = { SnackbarHost(snackbar) },
@@ -386,9 +443,22 @@ internal fun MainShellContent(
                             onRead = markRead,
                             listState = inboxListState,
                             onScrollToTop = jumpInboxToTop,
+                            floatingUiBlocked = floatingUiBlocked,
                         ) { open(it, inbox) }
-                        Destination.SAVED -> SavedList(saved, if (syncActivity.isActive) "No saved articles cached yet" else "Nothing saved yet", padding) { open(it, saved) }
-                        Destination.LIBRARY -> LibraryScreen(all, categories, feeds, padding, open)
+                        Destination.SAVED -> SavedList(
+                            entries = saved,
+                            emptyText = if (syncActivity.isActive) "No saved articles cached yet" else "Nothing saved yet",
+                            padding = padding,
+                            floatingUiBlocked = floatingUiBlocked,
+                        ) { open(it, saved) }
+                        Destination.LIBRARY -> LibraryScreen(
+                            entries = all,
+                            categories = categories,
+                            feeds = feeds,
+                            padding = padding,
+                            floatingUiBlocked = floatingUiBlocked,
+                            onOpen = open,
+                        )
                     }
                 }
             }
@@ -432,16 +502,41 @@ internal fun EntryList(
     onRead: (Entry) -> Unit,
     listState: LazyListState = rememberLazyListState(),
     onScrollToTop: (() -> Unit)? = null,
+    floatingUiBlocked: Boolean = false,
     onOpen: (Entry) -> Unit,
 ) {
     var observedEntryIds by remember { mutableStateOf<Set<Long>?>(null) }
     var detectedNewEntries by remember { mutableLongStateOf(0) }
     var queuedNewEntries by remember { mutableLongStateOf(0) }
-    val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 } }
+    var inboxLeadingHeaderVisible by remember(listState) {
+        mutableStateOf(listState.firstVisibleItemIndex > 1 || listState.firstVisibleItemScrollOffset > 0)
+    }
+    val atTop by remember {
+        derivedStateOf {
+            !listState.canScrollBackward ||
+                (!inboxLeadingHeaderVisible && listState.firstVisibleItemIndex <= 1 && listState.firstVisibleItemScrollOffset == 0)
+        }
+    }
     val scope = rememberCoroutineScope()
     val refreshState = rememberPullToRefreshState()
     var refreshAwaitingWorkManager by remember { mutableStateOf(false) }
     val displayRefreshing = isRefreshing || refreshAwaitingWorkManager
+
+    androidx.compose.runtime.LaunchedEffect(listState, triage) {
+        if (!triage) return@LaunchedEffect
+        snapshotFlow {
+            Triple(
+                listState.isScrollInProgress,
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+            )
+        }.collect { (isScrolling, index, offset) ->
+            when {
+                isScrolling || index > 1 || offset > 0 -> inboxLeadingHeaderVisible = true
+                !listState.canScrollBackward -> inboxLeadingHeaderVisible = false
+            }
+        }
+    }
 
     // WorkManager reports the newly enqueued request asynchronously. Keep the
     // pull indicator active through that brief hand-off, then use its state for
@@ -508,7 +603,7 @@ internal fun EntryList(
                     state = listState,
                     contentPadding = PaddingValues(bottom = 88.dp),
                 ) {
-                    items(entries, key = { it.id }) { entry ->
+                    articleItems(entries, showLeadingHeader = !triage || inboxLeadingHeaderVisible) { entry ->
                         Column(Modifier.animateItem()) {
                             if (triage) {
                                 // Treat a completed swipe as a command, not as
@@ -517,13 +612,15 @@ internal fun EntryList(
                                 // its old dismissed state and immediately mark
                                 // it read again (and queue another snackbar).
                                 val dismiss = rememberSwipeToDismissBoxState()
-                                androidx.compose.runtime.LaunchedEffect(dismiss.currentValue) {
-                                    if (dismiss.currentValue != SwipeToDismissBoxValue.Settled) {
-                                        onRead(entry)
-                                        // Reset before an Undo can reinsert this
-                                        // keyed row, so it cannot replay the
-                                        // already-handled swipe.
-                                        dismiss.reset()
+                                androidx.compose.runtime.LaunchedEffect(dismiss) {
+                                    snapshotFlow { dismiss.settledValue }.collect { settledValue ->
+                                        if (settledValue != SwipeToDismissBoxValue.Settled) {
+                                            // Settle the keyed UI state before
+                                            // Room can remove this row. Undo may
+                                            // reinsert the same key immediately.
+                                            dismiss.snapTo(SwipeToDismissBoxValue.Settled)
+                                            onRead(entry)
+                                        }
                                     }
                                 }
                                 SwipeToDismissBox(
@@ -543,7 +640,7 @@ internal fun EntryList(
             }
         }
         AnimatedVisibility(
-            visible = queuedNewEntries > 0,
+            visible = queuedNewEntries > 0 && !floatingUiBlocked,
             enter = fadeIn() + scaleIn(initialScale = .92f),
             exit = fadeOut() + scaleOut(targetScale = .92f),
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
@@ -570,6 +667,12 @@ internal fun EntryList(
                 }
             }
         }
+        ScrollToTopButton(
+            listState = listState,
+            enabled = queuedNewEntries == 0L && !floatingUiBlocked,
+            onClick = onScrollToTop,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 
@@ -591,17 +694,37 @@ private fun HeadlineRow(entry: Entry, onRead: (() -> Unit)?, onOpen: () -> Unit)
 }
 
 @Composable
-private fun SavedList(entries: List<Entry>, emptyText: String, padding: PaddingValues, onOpen: (Entry) -> Unit) {
+private fun SavedList(
+    entries: List<Entry>,
+    emptyText: String,
+    padding: PaddingValues,
+    floatingUiBlocked: Boolean,
+    onOpen: (Entry) -> Unit,
+) {
     if (entries.isEmpty()) {
         EmptyEntryState(emptyText, Icons.Rounded.Bookmark, padding)
     } else {
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 88.dp)) {
-            items(entries, key = { it.id }) { entry ->
-                BrookletHeadlineRow(entry.title, entryMetadata(entry), { onOpen(entry) }, isUnread = !entry.read) {
-                    SavedStatus(entry.deliveryState)
+        val listState = rememberLazyListState()
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(bottom = 88.dp),
+            ) {
+                articleItems(entries) { entry ->
+                    Column(Modifier.animateItem()) {
+                        BrookletHeadlineRow(entry.title, entryMetadata(entry), { onOpen(entry) }, isUnread = !entry.read) {
+                            SavedStatus(entry.deliveryState)
+                        }
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                    }
                 }
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
             }
+            ScrollToTopButton(
+                listState,
+                Modifier.align(Alignment.BottomCenter),
+                enabled = !floatingUiBlocked,
+            )
         }
     }
 }

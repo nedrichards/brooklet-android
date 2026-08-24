@@ -13,8 +13,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -22,6 +24,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.SemanticsActions
@@ -108,6 +111,59 @@ class InboxUndoJourneyTest {
         compose.onNodeWithText("First").assertIsDisplayed()
         compose.onNodeWithText("Second").assertIsDisplayed()
         assertEquals(mapOf(1L to false, 2L to false), pendingReadValues())
+    }
+
+    @Test fun repeatedSwipeUndoAtDateBoundaryKeepsViewportAndDoesNotReplayDismissal() {
+        val now = System.currentTimeMillis()
+        val day = 24 * 60 * 60 * 1_000L
+        seed(
+            *(1L..20L).map { entry(it, "Today $it", now + it) }.toTypedArray(),
+            entry(50, "Date boundary", now - day),
+            *(21L..30L).map { entry(it, "Older $it", now - (2 * day) + it) }.toTypedArray(),
+        )
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(19)
+        compose.onNodeWithText("Date boundary").assertIsDisplayed()
+
+        compose.onNodeWithText("Date boundary").performTouchInput { swipeLeft() }
+        compose.waitUntil(5_000) { isRead(50) }
+        val anchorBeforeUndo = compose.onNodeWithText("Today 2")
+            .assertIsDisplayed().getUnclippedBoundsInRoot().top.value
+        compose.onNodeWithText("Undo").performClick()
+
+        compose.waitUntil(5_000) { !isRead(50) }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        val anchorAfterUndo = compose.onNodeWithText("Today 2")
+            .assertIsDisplayed().getUnclippedBoundsInRoot().top.value
+        assertTrue(
+            "Viewport anchor moved from $anchorBeforeUndo to $anchorAfterUndo",
+            kotlin.math.abs(anchorAfterUndo - anchorBeforeUndo) < 0.5f,
+        )
+        assertEquals(false, isRead(50))
+        assertEquals(false, pendingReadValues()[50])
+        assertEquals(2, scheduler.immediateRequests)
+
+        compose.onNodeWithTag("entry-list").performScrollToIndex(19)
+        compose.onNodeWithText("Date boundary").assertIsDisplayed()
+        compose.onNodeWithText("Date boundary").performTouchInput { swipeLeft() }
+        compose.waitUntil(5_000) { isRead(50) }
+        val secondAnchorBeforeUndo = compose.onNodeWithText("Today 2")
+            .assertIsDisplayed().getUnclippedBoundsInRoot().top.value
+        compose.onNodeWithText("Undo").performClick()
+
+        compose.waitUntil(5_000) { !isRead(50) }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        val secondAnchorAfterUndo = compose.onNodeWithText("Today 2")
+            .assertIsDisplayed().getUnclippedBoundsInRoot().top.value
+        assertTrue(
+            "Viewport anchor moved from $secondAnchorBeforeUndo to $secondAnchorAfterUndo",
+            kotlin.math.abs(secondAnchorAfterUndo - secondAnchorBeforeUndo) < 0.5f,
+        )
+        assertEquals(false, isRead(50))
+        assertEquals(false, pendingReadValues()[50])
+        assertEquals(4, scheduler.immediateRequests)
     }
 
     @Test fun pendingUndoSurvivesLossAndRecreationOfItsSnackbarHost() {
@@ -255,6 +311,66 @@ class InboxUndoJourneyTest {
         compose.onNodeWithText("Entry 30").assertIsDisplayed()
         compose.onNodeWithText("Go back").performClick()
         compose.onNodeWithText("Entry 15").assertIsDisplayed()
+    }
+
+    @Test fun visibleScrollToTopButtonJumpsToTop() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+
+        compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed().performClick()
+
+        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+        compose.onNodeWithText("Entry 30").assertIsDisplayed()
+    }
+
+    @Test fun scrollToTopButtonFadesAfterInactivity() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed()
+
+        compose.waitUntil(6_000) {
+            compose.onAllNodesWithContentDescription("Scroll to top").fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test fun undoSnackbarTakesPriorityOverScrollToTopButton() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed()
+
+        compose.onNodeWithText("Entry 15").performTouchInput { swipeLeft() }
+
+        compose.onNodeWithText("Undo").assertIsDisplayed()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithContentDescription("Scroll to top").fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test fun browsingTopAppBarCollapsesWhenTheListScrolls() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        val expandedBounds = compose.onNodeWithTag("main-top-app-bar").getUnclippedBoundsInRoot()
+        val expandedHeight = expandedBounds.bottom - expandedBounds.top
+
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeUp() }
+
+        compose.waitUntil(5_000) {
+            val bounds = compose.onNodeWithTag("main-top-app-bar").getUnclippedBoundsInRoot()
+            bounds.bottom - bounds.top < expandedHeight
+        }
+    }
+
+    @Test fun inboxDateHeadingAppearsOnlyAfterLeavingTheInitialPosition() {
+        val now = System.currentTimeMillis()
+        seed(*(1L..30L).map { entry(it, "Entry $it", now + it) }.toTypedArray())
+        showInbox()
+
+        assertTrue(compose.onAllNodesWithText("Today").fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeUp() }
+        compose.onNodeWithText("Today").assertIsDisplayed()
     }
 
     private fun showInbox() {
