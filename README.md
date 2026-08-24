@@ -2,6 +2,8 @@
 
 Brooklet is an opinionated app for reading RSS and Atom feeds using the Miniflux server. It works with Android and it syncs and stores your articles offline if you're not always connected to your server. There's also an extra integration into Karakeep for bookmarking.
 
+![The inbox, a list of unread articles](docs/inbox-screenshot.png "Application screenshot")
+
 Brooklet is primarily maintained for its author's own use. It is free software:
 fork it, adapt it, and maintain your own version if it is useful to you. There
 is no promise of user support, compatibility, feature work, or response times.
@@ -9,12 +11,16 @@ Please read [SECURITY.md](SECURITY.md) before reporting a vulnerability, and
 [CONTRIBUTING.md](CONTRIBUTING.md) before opening a non-security issue or pull
 request.
 
+![Library, to find and browse all articles](docs/library-screenshot.png "Application screenshot")
+
 Brooklet is licensed under the GNU General Public License, version 3 or later;
 see [COPYING](COPYING). The privacy policy is in [PRIVACY.md](PRIVACY.md), and
 the release checklist for the Google Play Data Safety form is in
 [PLAY_DATA_SAFETY.md](PLAY_DATA_SAFETY.md).
 See [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) for the local optimized
 release deployment path. This is not currently released on the play store and may not be.
+
+![Saved, to review saved articles](docs/saved-screenshot.png "Application screenshot")
 
 ## Build
 
