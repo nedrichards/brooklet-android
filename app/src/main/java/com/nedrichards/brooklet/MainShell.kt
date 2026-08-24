@@ -210,7 +210,7 @@ internal fun MainShellContent(
             message = pending.message,
             actionLabel = if (pending.retry) "Retry" else "Undo",
             withDismissAction = true,
-            duration = SnackbarDuration.Long,
+            duration = if (pending.retry) SnackbarDuration.Long else SnackbarDuration.Short,
         )
         if (result == SnackbarResult.ActionPerformed) {
             inboxListState.layoutInfo.visibleItemsInfo
@@ -257,7 +257,7 @@ internal fun MainShellContent(
             message = "Jumped to top",
             actionLabel = "Go back",
             withDismissAction = true,
-            duration = SnackbarDuration.Long,
+            duration = SnackbarDuration.Short,
         )
         if (result == SnackbarResult.ActionPerformed) {
             val currentEntries = latestInbox
