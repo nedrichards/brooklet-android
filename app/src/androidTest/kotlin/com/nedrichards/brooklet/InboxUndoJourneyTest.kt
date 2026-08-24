@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeUp
@@ -286,6 +287,39 @@ class InboxUndoJourneyTest {
         compose.onNodeWithContentDescription("More actions").assertIsDisplayed()
     }
 
+    @Test fun overflowSearchStaysScopedToInbox() {
+        seed(
+            entry(1, "Needle unread", 2),
+            entry(2, "Needle read", 1, read = true),
+        )
+        showInbox()
+
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Search").performClick()
+        compose.onNodeWithTag("article-search-field").performTextInput("Needle")
+
+        compose.onNodeWithText("Needle unread").assertIsDisplayed()
+        assertTrue(compose.onAllNodesWithText("Needle read").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test fun librarySearchExposesReadAndSavedFiltersOnlyWhileSearching() {
+        seed(
+            entry(1, "Needle unread", 2),
+            entry(2, "Needle saved", 1, read = true, starred = true),
+        )
+        showInbox()
+
+        compose.onNodeWithTag("destination-library").performClick()
+        compose.onNodeWithContentDescription("Search Library").performClick()
+        compose.onNodeWithTag("article-search-field").performTextInput("Needle")
+
+        compose.onNodeWithTag("search-filter-unread").assertIsDisplayed()
+        compose.onNodeWithTag("search-filter-read").performClick()
+        compose.onNodeWithTag("search-filter-saved").performClick()
+        compose.onNodeWithText("Needle saved").assertIsDisplayed()
+        assertTrue(compose.onAllNodesWithText("Needle unread").fetchSemanticsNodes().isEmpty())
+    }
+
     @Test fun backgroundInboxInsertionShowsNewArticleNoticeAwayFromTop() {
         seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
         showInbox()
@@ -349,18 +383,19 @@ class InboxUndoJourneyTest {
         }
     }
 
-    @Test fun browsingTopAppBarCollapsesWhenTheListScrolls() {
+    @Test fun browsingTopAppBarKeepsTitleAndActionsInOneStableRow() {
         seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
         showInbox()
-        val expandedBounds = compose.onNodeWithTag("main-top-app-bar").getUnclippedBoundsInRoot()
-        val expandedHeight = expandedBounds.bottom - expandedBounds.top
+        val initialBounds = compose.onNodeWithTag("main-top-app-bar").getUnclippedBoundsInRoot()
+        val titleBounds = compose.onNodeWithTag("main-top-app-bar-title").getUnclippedBoundsInRoot()
+        val actionsBounds = compose.onNodeWithContentDescription("More actions").getUnclippedBoundsInRoot()
+
+        assertTrue(titleBounds.top < actionsBounds.bottom && actionsBounds.top < titleBounds.bottom)
 
         compose.onNodeWithTag("entry-list").performTouchInput { swipeUp() }
+        compose.waitForIdle()
 
-        compose.waitUntil(5_000) {
-            val bounds = compose.onNodeWithTag("main-top-app-bar").getUnclippedBoundsInRoot()
-            bounds.bottom - bounds.top < expandedHeight
-        }
+        assertEquals(initialBounds, compose.onNodeWithTag("main-top-app-bar").getUnclippedBoundsInRoot())
     }
 
     @Test fun inboxDateHeadingAppearsOnlyAfterLeavingTheInitialPosition() {
@@ -396,7 +431,13 @@ class InboxUndoJourneyTest {
             .associate { it.entryId to it.desiredValue }
     }
 
-    private fun entry(id: Long, title: String, order: Long, read: Boolean = false) = EntryEntity(
+    private fun entry(
+        id: Long,
+        title: String,
+        order: Long,
+        read: Boolean = false,
+        starred: Boolean = false,
+    ) = EntryEntity(
         accountId = ACCOUNT_ID,
         id = id,
         feedId = 1,
@@ -408,7 +449,7 @@ class InboxUndoJourneyTest {
         html = "<p>Article $id</p>",
         parsedBlocksJson = "[]",
         read = read,
-        starred = false,
+        starred = starred,
         readingMinutes = 1,
         lastOpenedAt = null,
     )

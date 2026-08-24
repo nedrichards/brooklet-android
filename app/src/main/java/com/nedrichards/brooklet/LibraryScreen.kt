@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
@@ -22,33 +21,26 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.MarkEmailRead
 import androidx.compose.material.icons.rounded.MarkEmailUnread
 import androidx.compose.material.icons.rounded.RssFeed
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.nedrichards.brooklet.designsystem.BrookletHeadlineRow
 import com.nedrichards.brooklet.model.Category
 import com.nedrichards.brooklet.model.Entry
 import com.nedrichards.brooklet.model.Feed
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 private enum class EntryScope { ALL, UNREAD, READ }
 
@@ -61,7 +53,6 @@ fun LibraryScreen(
     floatingUiBlocked: Boolean = false,
     onOpen: (Entry, List<Entry>) -> Unit,
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
     var categoryId by rememberSaveable { mutableStateOf<Long?>(null) }
     var feedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var scope by rememberSaveable { mutableStateOf<EntryScope?>(null) }
@@ -73,15 +64,7 @@ fun LibraryScreen(
             else -> scope = null
         }
     }
-    BackHandler(enabled = query.isBlank() && nested, onBack = goBack)
-
-    val searched by produceState(initialValue = emptyList<Entry>(), entries, query) {
-        value = if (query.isBlank()) emptyList() else withContext(Dispatchers.Default) {
-            entries.filter {
-                it.title.contains(query, true) || it.feedTitle.contains(query, true) || it.author?.contains(query, true) == true
-            }
-        }
-    }
+    BackHandler(enabled = nested, onBack = goBack)
     val visibleEntries = remember(entries, feedId, scope) {
         when {
             feedId != null -> entries.filter { it.feedId == feedId }
@@ -100,29 +83,15 @@ fun LibraryScreen(
     val rootListState = rememberLazyListState()
     val categoryListState = rememberLazyListState()
     val articleListState = rememberLazyListState()
-    val searchListState = rememberLazyListState()
 
     Column(Modifier.fillMaxSize().padding(padding)) {
-        TextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            leadingIcon = { Icon(Icons.Rounded.Search, null) },
-            placeholder = { Text("Search cached articles") },
-            singleLine = true,
-            shape = RoundedCornerShape(28.dp),
-            colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-        )
-
         Box(Modifier.fillMaxWidth().weight(1f)) {
             val activeListState = when {
-                query.isNotBlank() -> searchListState
                 feedId != null || scope != null -> articleListState
                 categoryId != null -> categoryListState
                 else -> rootListState
             }
             when {
-                query.isNotBlank() -> EntryResults(searched, "No cached articles match", searchListState) { onOpen(it, searched) }
                 feedId != null || scope != null -> Column {
                     LibraryBreadcrumb(
                         title = feedId?.let { id -> feeds.firstOrNull { it.id == id }?.title } ?: when (scope) {

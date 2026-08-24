@@ -46,7 +46,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MediumTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.NavigationBar
@@ -64,12 +63,10 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
-import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -86,7 +83,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -170,11 +166,12 @@ internal fun MainShellContent(
 ) {
     var destination by rememberSaveable { mutableStateOf(Destination.INBOX) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var searchDestination by rememberSaveable { mutableStateOf<Destination?>(null) }
     var inboxActionsOpen by remember { mutableStateOf(false) }
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
     var readerOrder by remember { mutableStateOf(emptyList<Long>()) }
     val inbox by repository.inbox(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
-    val savedState = if (destination == Destination.SAVED) {
+    val savedState = if (destination == Destination.SAVED || searchDestination == Destination.LIBRARY) {
         repository.saved(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val allState = if (destination == Destination.LIBRARY) {
@@ -183,13 +180,14 @@ internal fun MainShellContent(
     val categoriesState = if (destination == Destination.LIBRARY) {
         repository.categories(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
-    val feedsState = if (destination == Destination.LIBRARY) {
+    val feedsState = if (destination == Destination.LIBRARY || searchDestination != null) {
         repository.feeds(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val saved by savedState
     val all by allState
     val categories by categoriesState
     val feeds by feedsState
+    val savedEntryIds = remember(saved) { saved.mapTo(mutableSetOf()) { it.id } }
     val syncActivity by scheduler.activity.collectAsStateWithLifecycle(
         initialValue = com.nedrichards.brooklet.sync.SyncActivity(),
     )
@@ -198,16 +196,12 @@ internal fun MainShellContent(
     val undoUiState by undoViewModel.uiState.collectAsStateWithLifecycle()
     val mainContentState = rememberSaveableStateHolder()
     val inboxListState = rememberLazyListState()
-    val topAppBarState = rememberTopAppBarState()
-    val topAppBarScrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
-        state = topAppBarState,
-        canScroll = { !settingsOpen },
-    )
     val latestInbox by rememberUpdatedState(inbox)
     var pendingInboxReturn by remember { mutableStateOf<InboxListPosition?>(null) }
     var pendingUndoViewportAnchor by remember { mutableStateOf<UndoViewportAnchor?>(null) }
     BackHandler(enabled = readerId != null) { readerId = null }
     BackHandler(enabled = settingsOpen && readerId == null) { settingsOpen = false }
+    BackHandler(enabled = searchDestination != null && readerId == null) { searchDestination = null }
 
     LaunchedEffect(undoUiState.pending?.generation) {
         val pending = undoUiState.pending ?: return@LaunchedEffect
@@ -296,11 +290,6 @@ internal fun MainShellContent(
         )
         pendingUndoViewportAnchor = null
     }
-    LaunchedEffect(destination, settingsOpen) {
-        topAppBarState.heightOffset = 0f
-        topAppBarState.contentOffset = 0f
-    }
-
     if (readerId != null) {
         val activeReaderId = readerId!!
         Box(Modifier.fillMaxSize()) {
@@ -343,13 +332,21 @@ internal fun MainShellContent(
         scope.launch { inboxListState.animateScrollToItem(0) }
     }
     val selectDestination: (Destination) -> Unit = { selected ->
-        if (selected == Destination.INBOX && destination == Destination.INBOX) {
+        if (searchDestination != null) {
+            searchDestination = null
+            destination = selected
+        } else if (selected == Destination.INBOX && destination == Destination.INBOX) {
             jumpInboxToTop()
         } else {
             destination = selected
         }
     }
     val mainTopBarActions: @Composable RowScope.() -> Unit = {
+        if (destination == Destination.LIBRARY) {
+            IconButton(onClick = { searchDestination = Destination.LIBRARY }) {
+                Icon(Icons.Rounded.Search, "Search Library")
+            }
+        }
         when {
             syncActivity.isActive && syncActivity.userInitiated -> {
                 IconButton(onClick = scheduler::cancelImmediate) {
@@ -377,6 +374,16 @@ internal fun MainShellContent(
                 Icon(Icons.Rounded.MoreVert, "More actions")
             }
             DropdownMenu(expanded = inboxActionsOpen, onDismissRequest = { inboxActionsOpen = false }) {
+                if (destination != Destination.LIBRARY) {
+                    DropdownMenuItem(
+                        text = { Text("Search") },
+                        leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                        onClick = {
+                            inboxActionsOpen = false
+                            searchDestination = destination
+                        },
+                    )
+                }
                 if (destination == Destination.INBOX && inbox.isNotEmpty()) DropdownMenuItem(
                     text = { Text("Mark all read") },
                     leadingIcon = { Icon(Icons.Rounded.DoneAll, null) },
@@ -398,9 +405,19 @@ internal fun MainShellContent(
         Row(Modifier.fillMaxSize()) {
             if (useRail && !settingsOpen) AppRail(destination, selectDestination)
             Scaffold(
-                modifier = Modifier.weight(1f).nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
+                modifier = Modifier.weight(1f),
                 topBar = {
-                    if (settingsOpen) {
+                    if (searchDestination != null) {
+                        TopAppBar(
+                            modifier = Modifier.testTag("main-top-app-bar"),
+                            title = { Text("Search ${searchDestination!!.label}") },
+                            navigationIcon = {
+                                IconButton(onClick = { searchDestination = null }) {
+                                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Close search")
+                                }
+                            },
+                        )
+                    } else if (settingsOpen) {
                         TopAppBar(
                             title = { Text("Settings") },
                             navigationIcon = {
@@ -410,18 +427,22 @@ internal fun MainShellContent(
                             },
                         )
                     } else {
-                        MediumTopAppBar(
+                        TopAppBar(
                             modifier = Modifier.testTag("main-top-app-bar"),
-                            title = { Text(destination.label) },
+                            title = {
+                                Text(
+                                    destination.label,
+                                    modifier = Modifier.testTag("main-top-app-bar-title"),
+                                )
+                            },
                             actions = mainTopBarActions,
-                            scrollBehavior = topAppBarScrollBehavior,
                         )
                     }
                 },
                 snackbarHost = { SnackbarHost(snackbar) },
                 bottomBar = { if (!useRail && !settingsOpen) AppBar(destination, selectDestination) },
                 floatingActionButton = {
-                    if (!settingsOpen && destination == Destination.LIBRARY &&
+                    if (!settingsOpen && searchDestination == null && destination == Destination.LIBRARY &&
                         !(syncActivity.userInitiated && syncActivity.isActive) &&
                         syncActivity.state != SyncActivityState.RUNNING
                     ) FloatingActionButton(onClick = { scheduler.enqueueManualRefresh() }) {
@@ -429,7 +450,28 @@ internal fun MainShellContent(
                     }
                 },
             ) { padding ->
-                if (settingsOpen) {
+                val activeSearchDestination = searchDestination
+                if (activeSearchDestination != null) {
+                    val searchEntries = when (activeSearchDestination) {
+                        Destination.INBOX -> inbox
+                        Destination.SAVED -> saved
+                        Destination.LIBRARY -> all
+                    }
+                    ArticleSearchScreen(
+                        workspaceLabel = activeSearchDestination.label,
+                        entries = searchEntries,
+                        feeds = feeds,
+                        savedEntryIds = if (activeSearchDestination == Destination.LIBRARY) {
+                            savedEntryIds
+                        } else {
+                            emptySet()
+                        },
+                        showLibraryFilters = activeSearchDestination == Destination.LIBRARY,
+                        padding = padding,
+                        floatingUiBlocked = floatingUiBlocked,
+                        onOpen = open,
+                    )
+                } else if (settingsOpen) {
                     SettingsScreen(application, accountId, padding)
                 } else {
                     when (destination) {
