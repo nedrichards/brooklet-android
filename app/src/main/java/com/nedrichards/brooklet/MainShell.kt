@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -76,7 +77,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -107,6 +110,15 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     SAVED("Saved", Icons.Rounded.Bookmark),
     LIBRARY("Library", Icons.AutoMirrored.Rounded.LibraryBooks),
 }
+
+private data class InboxListPosition(
+    val entryId: Long,
+    val fallbackIndex: Int,
+    val scrollOffset: Int,
+)
+
+internal fun countNewLeadingInboxEntries(observedIds: Set<Long>?, currentIds: List<Long>): Int =
+    observedIds?.let { observed -> currentIds.takeWhile { it !in observed }.size } ?: 0
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -173,6 +185,9 @@ internal fun MainShellContent(
     val scope = rememberCoroutineScope()
     val undoUiState by undoViewModel.uiState.collectAsStateWithLifecycle()
     val mainContentState = rememberSaveableStateHolder()
+    val inboxListState = rememberLazyListState()
+    val latestInbox by rememberUpdatedState(inbox)
+    var pendingInboxReturn by remember { mutableStateOf<InboxListPosition?>(null) }
     BackHandler(enabled = readerId != null) { readerId = null }
     BackHandler(enabled = settingsOpen && readerId == null) { settingsOpen = false }
 
@@ -205,6 +220,33 @@ internal fun MainShellContent(
             duration = SnackbarDuration.Long,
         )
         undoViewModel.errorShown(error)
+    }
+    val undoFeedbackActive = undoUiState.pending != null ||
+        undoUiState.confirmation != null || undoUiState.error != null
+    LaunchedEffect(pendingInboxReturn, undoFeedbackActive) {
+        val position = pendingInboxReturn ?: return@LaunchedEffect
+        // Read-state Undo is the critical action. Wait until its feedback has
+        // resolved rather than replacing it with a navigation convenience.
+        if (undoFeedbackActive) return@LaunchedEffect
+        val result = snackbar.showSnackbar(
+            message = "Jumped to top",
+            actionLabel = "Go back",
+            withDismissAction = true,
+            duration = SnackbarDuration.Long,
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            val currentEntries = latestInbox
+            val targetIndex = currentEntries.indexOfFirst { it.id == position.entryId }
+                .takeIf { it >= 0 }
+                ?: position.fallbackIndex.coerceIn(0, (currentEntries.lastIndex).coerceAtLeast(0))
+            if (currentEntries.isNotEmpty()) {
+                inboxListState.animateScrollToItem(targetIndex, position.scrollOffset)
+            }
+        }
+        pendingInboxReturn = null
+    }
+    LaunchedEffect(destination) {
+        if (destination != Destination.INBOX) pendingInboxReturn = null
     }
 
     if (readerId != null) {
@@ -239,13 +281,29 @@ internal fun MainShellContent(
     val markRead: (Entry) -> Unit = undoViewModel::markRead
     val markAllRead = { undoViewModel.markAllRead(inbox) }
     val open: (Entry, List<Entry>) -> Unit = { entry, list -> readerOrder = list.map { it.id }; readerId = entry.id }
+    val jumpInboxToTop = jump@{
+        if (pendingInboxReturn != null) return@jump
+        val index = inboxListState.firstVisibleItemIndex
+        val offset = inboxListState.firstVisibleItemScrollOffset
+        if (index == 0 && offset == 0) return@jump
+        val entryId = inbox.getOrNull(index)?.id ?: return@jump
+        pendingInboxReturn = InboxListPosition(entryId, index, offset)
+        scope.launch { inboxListState.animateScrollToItem(0) }
+    }
+    val selectDestination: (Destination) -> Unit = { selected ->
+        if (selected == Destination.INBOX && destination == Destination.INBOX) {
+            jumpInboxToTop()
+        } else {
+            destination = selected
+        }
+    }
 
     // The reader temporarily replaces the originating workspace. Retain that
     // workspace's list cursor, search, and browse scope until it returns.
     mainContentState.SaveableStateProvider("main-content") { BoxWithConstraints(Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 600.dp
         Row(Modifier.fillMaxSize()) {
-            if (useRail && !settingsOpen) AppRail(destination) { destination = it }
+            if (useRail && !settingsOpen) AppRail(destination, selectDestination)
             Scaffold(
                 modifier = Modifier.weight(1f),
                 topBar = {
@@ -304,7 +362,7 @@ internal fun MainShellContent(
                     }
                 },
                 snackbarHost = { SnackbarHost(snackbar) },
-                bottomBar = { if (!useRail && !settingsOpen) AppBar(destination) { destination = it } },
+                bottomBar = { if (!useRail && !settingsOpen) AppBar(destination, selectDestination) },
                 floatingActionButton = {
                     if (!settingsOpen && destination == Destination.LIBRARY &&
                         !(syncActivity.userInitiated && syncActivity.isActive) &&
@@ -326,6 +384,8 @@ internal fun MainShellContent(
                             isRefreshing = syncActivity.userInitiated && syncActivity.isActive,
                             onRefresh = scheduler::enqueueUserSync,
                             onRead = markRead,
+                            listState = inboxListState,
+                            onScrollToTop = jumpInboxToTop,
                         ) { open(it, inbox) }
                         Destination.SAVED -> SavedList(saved, if (syncActivity.isActive) "No saved articles cached yet" else "Nothing saved yet", padding) { open(it, saved) }
                         Destination.LIBRARY -> LibraryScreen(all, categories, feeds, padding, open)
@@ -337,11 +397,27 @@ internal fun MainShellContent(
 }
 
 @Composable private fun AppBar(selected: Destination, select: (Destination) -> Unit) = NavigationBar {
-    Destination.entries.forEach { NavigationBarItem(selected == it, { select(it) }, { Icon(it.icon, it.label) }, label = { Text(it.label) }) }
+    Destination.entries.forEach {
+        NavigationBarItem(
+            selected == it,
+            { select(it) },
+            { Icon(it.icon, it.label) },
+            modifier = Modifier.testTag("destination-${it.name.lowercase()}"),
+            label = { Text(it.label) },
+        )
+    }
 }
 
 @Composable private fun AppRail(selected: Destination, select: (Destination) -> Unit) = NavigationRail(Modifier.fillMaxHeight()) {
-    Destination.entries.forEach { NavigationRailItem(selected == it, { select(it) }, { Icon(it.icon, it.label) }, label = { Text(it.label) }) }
+    Destination.entries.forEach {
+        NavigationRailItem(
+            selected == it,
+            { select(it) },
+            { Icon(it.icon, it.label) },
+            modifier = Modifier.testTag("destination-${it.name.lowercase()}"),
+            label = { Text(it.label) },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -354,10 +430,12 @@ internal fun EntryList(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onRead: (Entry) -> Unit,
+    listState: LazyListState = rememberLazyListState(),
+    onScrollToTop: (() -> Unit)? = null,
     onOpen: (Entry) -> Unit,
 ) {
-    val listState = rememberLazyListState()
-    var knownEntryIds by remember { mutableStateOf<Set<Long>?>(null) }
+    var observedEntryIds by remember { mutableStateOf<Set<Long>?>(null) }
+    var detectedNewEntries by remember { mutableLongStateOf(0) }
     var queuedNewEntries by remember { mutableLongStateOf(0) }
     val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 } }
     val scope = rememberCoroutineScope()
@@ -376,12 +454,24 @@ internal fun EntryList(
         onRefresh()
     }
 
-    androidx.compose.runtime.LaunchedEffect(entries, isRefreshing) {
-        val currentIds = entries.mapTo(HashSet()) { it.id }
-        knownEntryIds?.let { knownIds ->
-            if (isRefreshing && !atTop) queuedNewEntries += (currentIds - knownIds).size
+    androidx.compose.runtime.LaunchedEffect(entries) {
+        val currentIds = entries.map { it.id }
+        observedEntryIds?.let { observedIds ->
+            // Only count genuinely unseen rows at the leading edge. Keeping a
+            // cumulative set means an Undo can reinsert an article without it
+            // being mistaken for something fetched by a sync.
+            val newLeadingEntries = countNewLeadingInboxEntries(observedIds, currentIds)
+            detectedNewEntries += newLeadingEntries.toLong()
         }
-        knownEntryIds = currentIds
+        observedEntryIds = observedEntryIds.orEmpty() + currentIds
+    }
+    androidx.compose.runtime.LaunchedEffect(detectedNewEntries) {
+        if (detectedNewEntries == 0L) return@LaunchedEffect
+        // Let LazyColumn apply the keyed insertion before deciding whether the
+        // new leading rows are actually visible in the current viewport.
+        withFrameNanos { }
+        if (!atTop) queuedNewEntries += detectedNewEntries
+        detectedNewEntries = 0
     }
     androidx.compose.runtime.LaunchedEffect(atTop) {
         if (atTop) queuedNewEntries = 0
@@ -407,7 +497,14 @@ internal fun EntryList(
                 EmptyEntryState(emptyText, if (triage) Icons.Rounded.Inbox else Icons.Rounded.Bookmark, PaddingValues())
             } else {
                 LazyColumn(
-                    Modifier.fillMaxSize().testTag("entry-list"),
+                    Modifier.fillMaxSize().testTag("entry-list").semantics {
+                        if (!atTop && onScrollToTop != null) {
+                            customActions = listOf(CustomAccessibilityAction("Scroll to top") {
+                                onScrollToTop()
+                                true
+                            })
+                        }
+                    },
                     state = listState,
                     contentPadding = PaddingValues(bottom = 88.dp),
                 ) {
@@ -459,8 +556,11 @@ internal fun EntryList(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
-                        scope.launch { listState.animateScrollToItem(0) }
-                        queuedNewEntries = 0
+                        if (onScrollToTop != null) {
+                            onScrollToTop()
+                        } else {
+                            scope.launch { listState.animateScrollToItem(0) }
+                        }
                     }) {
                         Text("$queuedNewEntries new ${if (queuedNewEntries == 1L) "article" else "articles"}")
                     }

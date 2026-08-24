@@ -6,16 +6,23 @@ import android.graphics.drawable.ColorDrawable
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.widget.TextView
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.lifecycle.SavedStateHandle
@@ -30,17 +37,28 @@ import com.nedrichards.brooklet.sync.SyncActivity
 import com.nedrichards.brooklet.sync.SyncScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.ExternalResource
 
 class InboxUndoJourneyTest {
-    @get:Rule val compose = createComposeRule()
-
     private lateinit var database: BrookletDatabase
+
+    // Compose must dispose its Room collectors before the in-memory database
+    // closes. A lower-order rule wraps the Compose rule and cleans up last.
+    @get:Rule(order = 0)
+    val databaseCleanup = object : ExternalResource() {
+        override fun after() {
+            if (this@InboxUndoJourneyTest::database.isInitialized) database.close()
+        }
+    }
+
+    @get:Rule(order = 1)
+    val compose = createComposeRule()
+
     private lateinit var scheduler: RecordingScheduler
     private lateinit var repository: EntryRepository
     private lateinit var undoViewModel: InboxUndoViewModel
@@ -57,10 +75,6 @@ class InboxUndoJourneyTest {
         repository = EntryRepository(database.dao(), scheduler) { 1234L }
         savedState = SavedStateHandle()
         undoViewModel = InboxUndoViewModel(ACCOUNT_ID, repository, savedState)
-    }
-
-    @After fun tearDown() {
-        database.close()
     }
 
     @Test fun swipeUndoRestoresRoomMutationInboxRowAndShowsConfirmation() {
@@ -103,6 +117,10 @@ class InboxUndoJourneyTest {
             BrookletTheme(dynamicColor = false) {
                 if (hostVisible) {
                     MainShellContent(application, ACCOUNT_ID, repository, scheduler, undoViewModel)
+                } else {
+                    // Retain a root while deliberately removing the snackbar
+                    // host, so the Compose test harness can drive recreation.
+                    Box(Modifier.fillMaxSize().testTag("host-absent"))
                 }
             }
         }
@@ -110,6 +128,7 @@ class InboxUndoJourneyTest {
         compose.onNodeWithText("Lifecycle").performTouchInput { swipeLeft() }
         compose.waitUntil(5_000) { isRead(1) }
         compose.runOnIdle { hostVisible = false }
+        compose.onNodeWithTag("host-absent").assertIsDisplayed()
         compose.runOnIdle { hostVisible = true }
 
         compose.onNodeWithText("Undo").assertIsDisplayed().performClick()
@@ -209,6 +228,33 @@ class InboxUndoJourneyTest {
         }
 
         compose.onNodeWithContentDescription("More actions").assertIsDisplayed()
+    }
+
+    @Test fun backgroundInboxInsertionShowsNewArticleNoticeAwayFromTop() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+
+        seed(entry(31, "New background article", 31))
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("1 new article").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("1 new article").assertIsDisplayed()
+    }
+
+    @Test fun reselectingInboxJumpsToTopAndGoBackRestoresTheArticlePosition() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithText("Entry 15").assertIsDisplayed()
+
+        compose.onNodeWithTag("destination-inbox").performClick()
+
+        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+        compose.onNodeWithText("Entry 30").assertIsDisplayed()
+        compose.onNodeWithText("Go back").performClick()
+        compose.onNodeWithText("Entry 15").assertIsDisplayed()
     }
 
     private fun showInbox() {
