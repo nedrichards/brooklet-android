@@ -79,7 +79,6 @@ class SyncEngine(
                     }
                     client.save(pending.canonicalUrl, pending.title)
                 } else {
-                    check(config?.minifluxIntegrationConfirmed == true) { "Confirm the Miniflux integration is Karakeep" }
                     miniflux.saveToIntegration(pending.entryId)
                 }
             }.onSuccess { dao.acknowledgeKarakeep(pending.id, clock()) }

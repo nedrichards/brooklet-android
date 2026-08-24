@@ -146,7 +146,7 @@ fun SetupScreen(application: BrookletApplication) {
             )
         }
         Spacer(Modifier.height(24.dp))
-        Text("Requires Miniflux 2.3.2 or newer. Your token is encrypted with Android Keystore and is never logged.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Requires Miniflux 2.3.2 or later. Your token is encrypted, stored locally and is never logged.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     }
 }

@@ -15,11 +15,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nedrichards.brooklet.database.KarakeepConfigEntity
 import com.nedrichards.brooklet.database.StoragePolicyEntity
 import com.nedrichards.brooklet.database.TokenCipher
+import com.nedrichards.brooklet.designsystem.BrookletActionRow
 import com.nedrichards.brooklet.designsystem.BrookletSection
 import com.nedrichards.brooklet.designsystem.BrookletSpacing
 import com.nedrichards.brooklet.sync.SyncActivity
@@ -57,7 +58,6 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
     val sync by dao.observeSyncState(accountId).collectAsStateWithLifecycle(initialValue = null)
     val syncActivity by application.scheduler.activity.collectAsStateWithLifecycle(initialValue = SyncActivity())
     var route by remember { mutableStateOf("MINIFLUX") }
-    var confirmed by remember { mutableStateOf(false) }
     var endpoint by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     var retention by remember { mutableStateOf<Int?>(30) }
@@ -66,11 +66,16 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
     val apiKeyFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    val syncStatus = syncSummary(syncActivity, sync?.phase, sync?.processed ?: 0, sync?.total ?: 0, sync?.error)
+    val accountStatus = when {
+        syncActivity.state != SyncActivityState.IDLE || sync?.phase == "ERROR" -> syncStatus
+        pending > 0 -> "$pending reading ${if (pending == 1) "action" else "actions"} queued"
+        else -> null
+    }
 
     LaunchedEffect(accountId) {
         dao.karakeepConfig(accountId)?.let {
             route = it.preferredRoute
-            confirmed = it.minifluxIntegrationConfirmed
             endpoint = it.directEndpoint.orEmpty()
         }
         dao.storagePolicy(accountId)?.let { policy ->
@@ -93,33 +98,32 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Text(
-                    if (pending == 0) "All reading actions delivered" else "$pending reading actions queued",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    syncSummary(syncActivity, sync?.phase, sync?.processed ?: 0, sync?.total ?: 0, sync?.error),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (syncActivity.state == SyncActivityState.RETRYING || syncActivity.state == SyncActivityState.IDLE && sync?.phase == "ERROR") {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-                FilledTonalButton(
-                    onClick = if (syncActivity.cancellable && syncActivity.isActive) {
-                        application.scheduler::cancelImmediate
-                    } else {
-                        application.scheduler::enqueueUserSync
-                    },
-                    enabled = syncActivity.state != SyncActivityState.RUNNING || syncActivity.cancellable,
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                ) { Text(if (syncActivity.cancellable && syncActivity.isActive) "Stop sync" else "Sync now") }
-                TextButton(
-                    onClick = { disconnectConfirmation = true },
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                ) { Text("Disconnect account") }
+                accountStatus?.let { status ->
+                    Text(
+                        status,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (syncActivity.state == SyncActivityState.RETRYING || syncActivity.state == SyncActivityState.IDLE && sync?.phase == "ERROR") {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                BrookletActionRow {
+                    FilledTonalButton(
+                        onClick = if (syncActivity.cancellable && syncActivity.isActive) {
+                            application.scheduler::cancelImmediate
+                        } else {
+                            application.scheduler::enqueueUserSync
+                        },
+                        enabled = syncActivity.state != SyncActivityState.RUNNING || syncActivity.cancellable,
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                    ) { Text(if (syncActivity.cancellable && syncActivity.isActive) "Stop sync" else "Sync now") }
+                    OutlinedButton(
+                        onClick = { disconnectConfirmation = true },
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                    ) { Text("Disconnect account") }
+                }
             }
 
             BrookletSection(
@@ -129,9 +133,8 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                 Choice("Through Miniflux", route == "MINIFLUX") { route = "MINIFLUX"; message = null }
                 Choice("Direct from this device", route == "DIRECT") { route = "DIRECT"; message = null }
                 if (route == "MINIFLUX") {
-                    ToggleRow("I confirm the Miniflux save integration is Karakeep", confirmed) { confirmed = it }
                     Text(
-                        "Private-network delivery may require INTEGRATION_ALLOW_PRIVATE_NETWORKS=1 on the Miniflux server.",
+                        "Uses the save integration configured in Miniflux. Private-network delivery may require INTEGRATION_ALLOW_PRIVATE_NETWORKS=1 on the Miniflux server.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -175,7 +178,7 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                         val old = dao.karakeepConfig(accountId)
                         val encrypted = apiKey.takeIf(String::isNotBlank)?.let { TokenCipher().encrypt(it) }
                         dao.upsertKarakeepConfig(KarakeepConfigEntity(
-                            accountId, route, confirmed, endpoint.takeIf(String::isNotBlank),
+                            accountId, route, true, endpoint.takeIf(String::isNotBlank),
                             encrypted?.ciphertext ?: old?.directKeyCiphertext,
                             encrypted?.iv ?: old?.directKeyIv,
                         ))
@@ -189,7 +192,9 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
 
             BrookletSection("Diagnostics") {
                 Text("Database available", style = MaterialTheme.typography.bodyMedium)
-                Text("Queue $pending · Token and article-body logging disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Sync · $syncStatus", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Reading action queue · $pending", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Token and article-body logging disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -200,7 +205,7 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
             title = { Text("Disconnect account and delete local data?") },
             text = {
                 Text(
-                    "Brooklet will cancel sync and remove this account, cached articles, reading state, queued actions, Karakeep settings, and locally stored credentials. Nothing will be deleted from Miniflux or Karakeep.",
+                    "Brooklet will delete this account and all of its offline data from this device, including cached articles, reading state, queued actions, Karakeep settings, and locally stored credentials.\n\nYour Miniflux and Karakeep servers will not be changed. No articles, feeds, reading state, or bookmarks will be deleted from either server.",
                 )
             },
             confirmButton = {
@@ -249,14 +254,5 @@ private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) = Row(
     verticalAlignment = Alignment.CenterVertically,
 ) {
     RadioButton(selected, onClick)
-    Text(label, style = MaterialTheme.typography.bodyMedium)
-}
-
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) = Row(
-    Modifier.fillMaxWidth().clickable { onChecked(!checked) }.padding(vertical = 2.dp),
-    verticalAlignment = Alignment.CenterVertically,
-) {
-    Checkbox(checked, onChecked)
     Text(label, style = MaterialTheme.typography.bodyMedium)
 }

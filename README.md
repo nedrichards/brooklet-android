@@ -1,6 +1,6 @@
 # Brooklet
 
-Brooklet is an opinionated way of reading RSS and Atom feeds using the Miniflux server. It works with Android and is a phone-first and offline-first with an extra integration into Karakeep for bookmarking..
+Brooklet is an opinionated app for reading RSS and Atom feeds using the Miniflux server. It works with Android and it syncs and stores your articles offline if you're not always connected to your server. There's also an extra integration into Karakeep for bookmarking.
 
 Brooklet is primarily maintained for its author's own use. It is free software:
 fork it, adapt it, and maintain your own version if it is useful to you. There
