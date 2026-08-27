@@ -33,4 +33,25 @@ class ArticleHtmlSanitiserTest {
         assertFalse(result.contains("href"))
         assertEquals("<a>unsafe</a> <a>relative</a>", result)
     }
+
+    @Test fun resolvesRelativeLinksAgainstTheArticleUrl() {
+        val result = sanitiseInlineArticleHtml(
+            """<a href="/stories/next">next</a> <a href="related">related</a>""",
+            "https://example.com/articles/current",
+        )
+
+        assertEquals(
+            """<a href="https://example.com/stories/next">next</a> <a href="https://example.com/articles/related">related</a>""",
+            result,
+        )
+    }
+
+    @Test fun doesNotResolveUnsafeLinksAgainstTheArticleUrl() {
+        val result = sanitiseInlineArticleHtml(
+            """<a href="javascript:alert(1)">unsafe</a> <a href="//cdn.example.com/page">web</a>""",
+            "https://example.com/article",
+        )
+
+        assertEquals("""<a>unsafe</a> <a href="https://cdn.example.com/page">web</a>""", result)
+    }
 }

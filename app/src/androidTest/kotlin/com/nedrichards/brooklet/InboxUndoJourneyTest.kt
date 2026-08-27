@@ -1,17 +1,14 @@
 package com.nedrichards.brooklet
 
 import android.content.Context
-import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
-import android.text.style.BackgroundColorSpan
-import android.text.style.ForegroundColorSpan
-import android.widget.TextView
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -32,7 +29,6 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.lifecycle.SavedStateHandle
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import androidx.test.platform.app.InstrumentationRegistry
 import com.nedrichards.brooklet.database.BrookletDatabase
 import com.nedrichards.brooklet.database.EntryEntity
 import com.nedrichards.brooklet.designsystem.BrookletTheme
@@ -243,38 +239,26 @@ class InboxUndoJourneyTest {
         assertEquals(false, pendingReadValues()[1])
     }
 
-    @Test fun richArticleSpansCannotOverrideThemeForegroundOrBackground() {
+    @Test fun richArticleSpansCannotOverrideThemeColours() {
         val rendered = themeSafeArticleText(
             """<span style="color:black;background:black"><font color="#000000">Dark text</font></span>""",
         )
 
-        assertEquals("Dark text", rendered.toString())
-        assertEquals(0, rendered.getSpans(0, rendered.length, ForegroundColorSpan::class.java).size)
-        assertEquals(0, rendered.getSpans(0, rendered.length, BackgroundColorSpan::class.java).size)
+        assertEquals("Dark text", rendered.text)
+        assertTrue(rendered.spanStyles.none { it.item.color != Color.Unspecified })
+        assertTrue(rendered.spanStyles.none { it.item.background != Color.Unspecified })
     }
 
-    @Test fun richArticleTextViewUsesTheSuppliedDarkThemeColoursForTextLinksAndBackground() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        lateinit var view: TextView
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            view = TextView(context)
-            configureRichArticleText(
-                view = view,
-                html = """<font color="black"><a href="https://example.com">Dark link</a></font>""",
-                textSizeSp = 18f,
-                textColor = Color.WHITE,
-                linkColor = Color.CYAN,
-            )
-        }
+    @Test fun richArticleLinksBecomeComposeLinkAnnotations() {
+        val rendered = themeSafeArticleText(
+            html = """Read <a href="/next">the next article</a>.""",
+            articleUrl = "https://example.com/articles/current",
+            linkColor = Color.Cyan,
+        )
 
-        assertEquals(Color.WHITE, view.currentTextColor)
-        assertEquals(Color.CYAN, view.linkTextColors.defaultColor)
-        assertEquals(Color.TRANSPARENT, (view.background as ColorDrawable).color)
-        assertEquals(0, (view.text as android.text.Spanned).getSpans(
-            0,
-            view.text.length,
-            ForegroundColorSpan::class.java,
-        ).size)
+        val link = rendered.getLinkAnnotations(0, rendered.length).single().item as LinkAnnotation.Url
+        assertEquals("https://example.com/next", link.url)
+        assertEquals(Color.Cyan, link.styles?.style?.color)
     }
 
     @Test fun productionUndoViewModelFactoryReceivesSavedStateCreationExtras() {
