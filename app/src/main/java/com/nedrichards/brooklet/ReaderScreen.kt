@@ -82,6 +82,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nedrichards.brooklet.model.DocumentBlock
+import com.nedrichards.brooklet.designsystem.BrookletSpacing
+import com.nedrichards.brooklet.designsystem.BrookletWidths
 import com.nedrichards.brooklet.model.KarakeepRoute
 import com.nedrichards.brooklet.network.ArticleImageClient
 import com.nedrichards.brooklet.sync.EntryRepository
@@ -113,6 +115,7 @@ fun ReaderScreen(
     onKeptUnread: () -> Unit,
     onPrevious: (() -> Unit)?,
     onNext: (() -> Unit)?,
+    snackbarHost: @Composable () -> Unit = {},
 ) {
     val entry by repository.entry(accountId, entryId).collectAsStateWithLifecycle(initialValue = null)
     val position by repository.position(accountId, entryId).collectAsStateWithLifecycle(initialValue = null)
@@ -133,6 +136,7 @@ fun ReaderScreen(
 
     val current = entry ?: return FullScreenProgress()
     Scaffold(
+        snackbarHost = snackbarHost,
         topBar = {
             ReaderTopAppBar(
                 entry = current,
@@ -152,11 +156,11 @@ fun ReaderScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
         LazyColumn(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().align(Alignment.TopCenter).testTag("reader-content"),
+            Modifier.widthIn(max = BrookletWidths.reading).fillMaxWidth().align(Alignment.TopCenter).testTag("reader-content"),
             state = listState,
         ) {
             item {
-                Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                Column(Modifier.padding(horizontal = BrookletSpacing.screenCompact, vertical = 14.dp)) {
                     Text(current.title, style = MaterialTheme.typography.headlineSmall)
                     Text(listOfNotNull(current.author, current.feedTitle).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -165,8 +169,16 @@ fun ReaderScreen(
             item {
                 HorizontalDivider(Modifier.padding(top = 20.dp))
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    FilledTonalButton(onClick = { onPrevious?.invoke() }, enabled = onPrevious != null) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null); Text(" Previous") }
-                    FilledTonalButton(onClick = { onNext?.invoke() }, enabled = onNext != null) { Text("Next "); Icon(Icons.AutoMirrored.Rounded.ArrowForward, null) }
+                    FilledTonalButton(onClick = { onPrevious?.invoke() }, enabled = onPrevious != null) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Previous")
+                    }
+                    FilledTonalButton(onClick = { onNext?.invoke() }, enabled = onNext != null) {
+                        Text("Next")
+                        Spacer(Modifier.width(8.dp))
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
+                    }
                 }
             }
         }

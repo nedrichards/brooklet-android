@@ -36,6 +36,8 @@ import androidx.activity.compose.ReportDrawnWhen
 import com.nedrichards.brooklet.database.AccountEntity
 import com.nedrichards.brooklet.sync.SyncActivity
 import com.nedrichards.brooklet.sync.SyncActivityState
+import com.nedrichards.brooklet.designsystem.BrookletInlineError
+import com.nedrichards.brooklet.designsystem.BrookletContextIcon
 
 @Composable
 fun BrookletApp(sharedUrl: String? = null, onSharedUrlHandled: () -> Unit = {}) {
@@ -88,11 +90,11 @@ private fun InitialSyncGate(application: BrookletApplication, accountId: Long) {
     } else {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Surface(shape = CircleShape, color = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(64.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.WaterDrop, null, Modifier.size(32.dp), tint = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
-                }
+                BrookletContextIcon(
+                    icon = Icons.Rounded.WaterDrop,
+                    containerColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer,
+                )
                 Spacer(Modifier.height(16.dp))
                 Text("Brooklet", style = androidx.compose.material3.MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(20.dp))
@@ -108,11 +110,7 @@ private fun InitialSyncGate(application: BrookletApplication, accountId: Long) {
                         modifier = Modifier.padding(top = 16.dp),
                     )
                     if (syncActivity.state == SyncActivityState.RETRYING && !sync?.error.isNullOrBlank()) {
-                        Text(
-                            sync?.error.orEmpty(),
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
+                        BrookletInlineError(sync?.error.orEmpty(), Modifier.padding(top = 8.dp))
                     }
                     if (syncActivity.state == SyncActivityState.RUNNING && (sync?.total ?: 0) > 0) {
                         LinearProgressIndicator(
@@ -141,7 +139,7 @@ private fun InitialSyncGate(application: BrookletApplication, accountId: Long) {
                     }
                 } else if (sync?.phase == "ERROR" && !syncStopped) {
                     Text("Initial sync needs attention", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
-                    Text(sync?.error.orEmpty(), color = androidx.compose.material3.MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 12.dp))
+                    BrookletInlineError(sync?.error.orEmpty(), Modifier.padding(vertical = 12.dp))
                     Button(onClick = {
                         syncStopped = false
                         application.scheduler.enqueueUserSync()
