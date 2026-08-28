@@ -44,6 +44,38 @@ a physical device. Test the minified release build, not only debug.
 4. Confirm rollback: retain the previous signed artifact and document whether
    a regression requires a new Play release or unpublishing a GitHub asset.
 
+## Automation plan
+
+The pull-request and `main` workflow deliberately stops at an installable
+debug-signed APK. Release automation should be a separate, manually dispatched
+workflow so untrusted pull-request code never runs with signing or publishing
+credentials. Add it only when there is a real distribution target and an
+agreed key-management process.
+
+Recommended stages for that workflow are:
+
+1. Accept an existing signed tag as input, check out that exact commit, and
+   require approval through a protected GitHub `release` environment.
+2. Run the same tests and lint as the Android checks workflow. Derive and
+   validate `versionCode` and `versionName` from the tag rather than editing
+   them during an opaque CI step.
+3. Retrieve the upload key from an external secret manager through GitHub OIDC
+   where possible. If encrypted GitHub secrets are used instead, store the
+   base64-encoded keystore, alias, and passwords as environment secrets, write
+   the keystore only to the runner's temporary directory, mask values, and
+   delete it in an `always()` cleanup step.
+4. Build the signed AAB, run `bundletool validate`, verify its signature and
+   certificate fingerprint, generate SHA-256 checksums and an SBOM, and attest
+   the artifacts to the immutable commit.
+5. First upload to a non-production Play track or create a draft GitHub
+   release. Make production promotion a second approved job rather than an
+   automatic consequence of a tag or merge.
+
+Prefer Play App Signing: CI then holds only the replaceable upload key, not the
+app-signing key. Pin third-party actions to full commit hashes, grant each job
+only the permissions it needs, prevent concurrent releases, retain the prior
+artifact for rollback, and rehearse key rotation before enabling publication.
+
 ## GitHub controls to enable
 
 After creating the repository, enable private vulnerability reporting,
