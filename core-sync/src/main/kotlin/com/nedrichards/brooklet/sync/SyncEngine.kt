@@ -21,7 +21,11 @@ class SyncEngine(
         MinifluxClient(serverUrl, token)
     },
 ) {
-    suspend fun run(refreshFeeds: Boolean = false, pullRemoteState: Boolean = true) {
+    suspend fun run(
+        refreshFeeds: Boolean = false,
+        pullRemoteState: Boolean = true,
+        entriesOnly: Boolean = false,
+    ) {
         val account = dao.account() ?: return
         try {
             state(account.id, "CONNECTING")
@@ -35,15 +39,17 @@ class SyncEngine(
             pushMutations(miniflux, account.id)
             pushKarakeep(miniflux, account.id)
             if (pullRemoteState) {
-                pull(miniflux, account.id)
-                state(account.id, "PRUNING")
-                dao.pruneCompletedKarakeep(account.id, clock() - COMPLETED_KARAKEEP_RECEIPT_MS)
-                val policy = dao.storagePolicy(account.id)
-                if (policy == null) {
-                    dao.pruneReadEntries(account.id, clock() - 30L * 24 * 60 * 60 * 1000)
-                } else {
-                    policy.retainReadDays?.let { days ->
-                        dao.pruneReadEntries(account.id, clock() - days.toLong() * 24 * 60 * 60 * 1000, policy.keepAtMost)
+                pull(miniflux, account.id, includeFeedMetadata = !entriesOnly)
+                if (!entriesOnly) {
+                    state(account.id, "PRUNING")
+                    dao.pruneCompletedKarakeep(account.id, clock() - COMPLETED_KARAKEEP_RECEIPT_MS)
+                    val policy = dao.storagePolicy(account.id)
+                    if (policy == null) {
+                        dao.pruneReadEntries(account.id, clock() - 30L * 24 * 60 * 60 * 1000)
+                    } else {
+                        policy.retainReadDays?.let { days ->
+                            dao.pruneReadEntries(account.id, clock() - days.toLong() * 24 * 60 * 60 * 1000, policy.keepAtMost)
+                        }
                     }
                 }
             }
@@ -89,19 +95,21 @@ class SyncEngine(
         }
     }
 
-    private suspend fun pull(client: MinifluxClient, accountId: Long) {
+    private suspend fun pull(client: MinifluxClient, accountId: Long, includeFeedMetadata: Boolean) {
         val cursor = dao.cursor(accountId)?.changedAfterEpochSeconds ?: 0
         val overlap = incrementalStart(cursor)
-        state(accountId, "PULLING_FEEDS")
-        val categories = client.categories()
-        val feeds = client.feeds()
-        dao.upsertCategories(categories.map { CategoryEntity(accountId, it.id, it.title) })
-        dao.upsertFeeds(feeds.map { feed -> FeedEntity(accountId, feed.id, feed.category?.id ?: 0, feed.title, feed.siteUrl, feed.feedUrl) })
+        if (includeFeedMetadata) {
+            state(accountId, "PULLING_FEEDS")
+            val categories = client.categories()
+            val feeds = client.feeds()
+            dao.upsertCategories(categories.map { CategoryEntity(accountId, it.id, it.title) })
+            dao.upsertFeeds(feeds.map { feed -> FeedEntity(accountId, feed.id, feed.category?.id ?: 0, feed.title, feed.siteUrl, feed.feedUrl) })
+        }
         var offset = 0
         var newest = cursor
+        state(accountId, "PULLING_ENTRIES")
         do {
             val page = client.entriesChangedAfter(overlap, offset = offset)
-            state(accountId, "PULLING_ENTRIES", offset, page.total)
             val mapped = page.entries.map { dto ->
                 val changed = Instant.parse(dto.changedAt).epochSecond
                 newest = maxOf(newest, changed)

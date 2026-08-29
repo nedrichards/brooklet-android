@@ -54,7 +54,6 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
@@ -91,7 +90,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.CircleShape
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.initializer
@@ -100,6 +98,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nedrichards.brooklet.model.Entry
 import com.nedrichards.brooklet.model.DeliveryState
 import com.nedrichards.brooklet.designsystem.BrookletHeadlineRow
+import com.nedrichards.brooklet.designsystem.BrookletShapes
+import com.nedrichards.brooklet.designsystem.BrookletSpacing
+import com.nedrichards.brooklet.designsystem.BrookletSnackbarHost
+import com.nedrichards.brooklet.designsystem.BrookletEmptyState
 import kotlinx.coroutines.flow.collect
 import com.nedrichards.brooklet.sync.SyncActivityState
 import com.nedrichards.brooklet.sync.EntryRepository
@@ -127,6 +129,37 @@ private data class UndoViewportAnchor(
 
 internal fun countNewLeadingInboxEntries(observedIds: Set<Long>?, currentIds: List<Long>): Int =
     observedIds?.let { observed -> currentIds.takeWhile { it !in observed }.size } ?: 0
+
+/**
+ * Remembers the live Inbox plus a small window of removals, rather than every
+ * ID seen for the lifetime of the process. The active Undo batch is supplied
+ * separately so even a large mark-all restoration is never reported as new.
+ */
+internal class InboxObservationTracker(
+    private val recentRemovalLimit: Int = 256,
+) {
+    private var currentIds: Set<Long>? = null
+    private val recentRemovals = LinkedHashSet<Long>()
+
+    fun observe(newIds: List<Long>, restoredIds: Set<Long> = emptySet()): Int {
+        val previous = currentIds
+        val newCount = previous?.let { knownCurrent ->
+            newIds.takeWhile { id ->
+                id !in knownCurrent && id !in recentRemovals && id !in restoredIds
+            }.size
+        } ?: 0
+        val newSet = newIds.toSet()
+        previous?.forEach { id -> if (id !in newSet) recentRemovals += id }
+        recentRemovals.removeAll(newSet)
+        while (recentRemovals.size > recentRemovalLimit) {
+            recentRemovals.remove(recentRemovals.first())
+        }
+        currentIds = newSet
+        return newCount
+    }
+
+    internal val retainedRemovalCount: Int get() = recentRemovals.size
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -170,18 +203,23 @@ internal fun MainShellContent(
     var inboxActionsOpen by remember { mutableStateOf(false) }
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
     var readerOrder by remember { mutableStateOf(emptyList<Long>()) }
-    val inbox by repository.inbox(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val inboxFlow = remember(accountId, repository) { repository.inbox(accountId) }
+    val savedFlow = remember(accountId, repository) { repository.saved(accountId) }
+    val allEntriesFlow = remember(accountId, repository) { repository.allEntries(accountId) }
+    val categoriesFlow = remember(accountId, repository) { repository.categories(accountId) }
+    val feedsFlow = remember(accountId, repository) { repository.feeds(accountId) }
+    val inbox by inboxFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val savedState = if (destination == Destination.SAVED || searchDestination == Destination.LIBRARY) {
-        repository.saved(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        savedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val allState = if (destination == Destination.LIBRARY) {
-        repository.allEntries(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        allEntriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val categoriesState = if (destination == Destination.LIBRARY) {
-        repository.categories(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        categoriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val feedsState = if (destination == Destination.LIBRARY || searchDestination != null) {
-        repository.feeds(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        feedsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val saved by savedState
     val all by allState
@@ -292,30 +330,28 @@ internal fun MainShellContent(
     }
     if (readerId != null) {
         val activeReaderId = readerId!!
-        Box(Modifier.fillMaxSize()) {
-            ReaderScreen(
-                accountId = accountId,
-                entryId = activeReaderId,
-                repository = repository,
-                savePosition = { block, offset ->
-                    application.saveReaderPosition(accountId, activeReaderId, block, offset)
-                },
-                onBack = { readerId = null },
-                onKeptUnread = {
-                    readerId = null
-                    scope.launch {
-                        snackbar.showSnackbar(
-                            message = "Kept unread",
-                            withDismissAction = true,
-                            duration = SnackbarDuration.Short,
-                        )
-                    }
-                },
-                onPrevious = readerOrder.before(activeReaderId)?.let { { readerId = it } },
-                onNext = readerOrder.after(activeReaderId)?.let { { readerId = it } },
-            )
-            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
-        }
+        ReaderScreen(
+            accountId = accountId,
+            entryId = activeReaderId,
+            repository = repository,
+            savePosition = { block, offset ->
+                application.saveReaderPosition(accountId, activeReaderId, block, offset)
+            },
+            onBack = { readerId = null },
+            onKeptUnread = {
+                readerId = null
+                scope.launch {
+                    snackbar.showSnackbar(
+                        message = "Kept unread",
+                        withDismissAction = true,
+                        duration = SnackbarDuration.Short,
+                    )
+                }
+            },
+            onPrevious = readerOrder.before(activeReaderId)?.let { { readerId = it } },
+            onNext = readerOrder.after(activeReaderId)?.let { { readerId = it } },
+            snackbarHost = { BrookletSnackbarHost(snackbar) },
+        )
         return
     }
 
@@ -439,7 +475,7 @@ internal fun MainShellContent(
                         )
                     }
                 },
-                snackbarHost = { SnackbarHost(snackbar) },
+                snackbarHost = { BrookletSnackbarHost(snackbar) },
                 bottomBar = { if (!useRail && !settingsOpen) AppBar(destination, selectDestination) },
                 floatingActionButton = {
                     if (!settingsOpen && searchDestination == null && destination == Destination.LIBRARY &&
@@ -472,7 +508,15 @@ internal fun MainShellContent(
                         onOpen = open,
                     )
                 } else if (settingsOpen) {
-                    SettingsScreen(application, accountId, padding)
+                    SettingsScreen(application, accountId, padding) { message ->
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                message = message,
+                                withDismissAction = true,
+                                duration = SnackbarDuration.Short,
+                            )
+                        }
+                    }
                 } else {
                     when (destination) {
                         Destination.INBOX -> EntryList(
@@ -486,6 +530,7 @@ internal fun MainShellContent(
                             listState = inboxListState,
                             onScrollToTop = jumpInboxToTop,
                             floatingUiBlocked = floatingUiBlocked,
+                            restoredEntryIds = undoUiState.restoredEntryIds,
                         ) { open(it, inbox) }
                         Destination.SAVED -> SavedList(
                             entries = saved,
@@ -545,9 +590,10 @@ internal fun EntryList(
     listState: LazyListState = rememberLazyListState(),
     onScrollToTop: (() -> Unit)? = null,
     floatingUiBlocked: Boolean = false,
+    restoredEntryIds: Set<Long> = emptySet(),
     onOpen: (Entry) -> Unit,
 ) {
-    var observedEntryIds by remember { mutableStateOf<Set<Long>?>(null) }
+    val observationTracker = remember { InboxObservationTracker() }
     var detectedNewEntries by remember { mutableLongStateOf(0) }
     var queuedNewEntries by remember { mutableLongStateOf(0) }
     var inboxLeadingHeaderVisible by remember(listState) {
@@ -591,16 +637,9 @@ internal fun EntryList(
         onRefresh()
     }
 
-    androidx.compose.runtime.LaunchedEffect(entries) {
+    androidx.compose.runtime.LaunchedEffect(entries, restoredEntryIds) {
         val currentIds = entries.map { it.id }
-        observedEntryIds?.let { observedIds ->
-            // Only count genuinely unseen rows at the leading edge. Keeping a
-            // cumulative set means an Undo can reinsert an article without it
-            // being mistaken for something fetched by a sync.
-            val newLeadingEntries = countNewLeadingInboxEntries(observedIds, currentIds)
-            detectedNewEntries += newLeadingEntries.toLong()
-        }
-        observedEntryIds = observedEntryIds.orEmpty() + currentIds
+        detectedNewEntries += observationTracker.observe(currentIds, restoredEntryIds)
     }
     androidx.compose.runtime.LaunchedEffect(detectedNewEntries) {
         if (detectedNewEntries == 0L) return@LaunchedEffect
@@ -631,7 +670,10 @@ internal fun EntryList(
             },
         ) {
             if (entries.isEmpty()) {
-                EmptyEntryState(emptyText, if (triage) Icons.Rounded.Inbox else Icons.Rounded.Bookmark, PaddingValues())
+                BrookletEmptyState(
+                    text = emptyText,
+                    icon = if (triage) Icons.Rounded.Inbox else Icons.Rounded.Bookmark,
+                )
             } else {
                 LazyColumn(
                     Modifier.fillMaxSize().testTag("entry-list").semantics {
@@ -688,7 +730,7 @@ internal fun EntryList(
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
         ) {
             Surface(
-                shape = CircleShape,
+                shape = BrookletShapes.capsule,
                 color = MaterialTheme.colorScheme.secondaryContainer,
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 shadowElevation = 3.dp,
@@ -744,7 +786,11 @@ private fun SavedList(
     onOpen: (Entry) -> Unit,
 ) {
     if (entries.isEmpty()) {
-        EmptyEntryState(emptyText, Icons.Rounded.Bookmark, padding)
+        BrookletEmptyState(
+            text = emptyText,
+            icon = Icons.Rounded.Bookmark,
+            modifier = Modifier.padding(padding),
+        )
     } else {
         val listState = rememberLazyListState()
         Box(Modifier.fillMaxSize().padding(padding)) {
@@ -772,19 +818,6 @@ private fun SavedList(
 }
 
 @Composable
-private fun EmptyEntryState(text: String, icon: ImageVector, padding: PaddingValues) = Box(
-    Modifier.fillMaxSize().padding(padding).padding(32.dp),
-    contentAlignment = Alignment.Center,
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
-            Icon(icon, null, Modifier.padding(18.dp).width(28.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-        }
-        Text(text, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
 private fun SavedStatus(state: DeliveryState?) {
     val (icon, label) = when (state) {
         DeliveryState.QUEUED, DeliveryState.SENDING -> Icons.Rounded.CloudUpload to "Queued"
@@ -794,13 +827,19 @@ private fun SavedStatus(state: DeliveryState?) {
     }
     val attention = state == DeliveryState.NEEDS_ATTENTION
     Surface(
-        shape = CircleShape,
+        shape = BrookletShapes.capsule,
         color = if (attention) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
         contentColor = if (attention) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
         modifier = Modifier.padding(horizontal = 8.dp),
     ) {
-        Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, Modifier.width(16.dp))
+        Row(
+            Modifier.padding(
+                horizontal = BrookletSpacing.capsuleHorizontal,
+                vertical = BrookletSpacing.capsuleVertical,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, null, Modifier.width(BrookletSpacing.capsuleIcon))
             Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 5.dp))
         }
     }

@@ -34,6 +34,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import java.net.URI
+import com.nedrichards.brooklet.designsystem.BrookletInlineError
+import com.nedrichards.brooklet.designsystem.BrookletSpacing
+import com.nedrichards.brooklet.designsystem.BrookletContextIcon
+import com.nedrichards.brooklet.designsystem.BrookletWidths
 
 private val sharedUrlPattern = Regex("""https?://[^\s<>()]+""", RegexOption.IGNORE_CASE)
 
@@ -71,11 +75,17 @@ fun SubscribeScreen(application: BrookletApplication, accountId: Long, url: Stri
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             Column(
-                Modifier.widthIn(max = 560.dp).fillMaxWidth().align(Alignment.Center).padding(horizontal = 28.dp),
+                Modifier.widthIn(max = BrookletWidths.form).fillMaxWidth().align(Alignment.Center)
+                    .padding(horizontal = BrookletSpacing.screenComfortable),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(Icons.Rounded.RssFeed, null, modifier = Modifier.padding(bottom = 20.dp), tint = MaterialTheme.colorScheme.primary)
+                BrookletContextIcon(
+                    icon = Icons.Rounded.RssFeed,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(bottom = 20.dp),
+                )
                 Text("Subscribe to this feed?", style = MaterialTheme.typography.headlineSmall)
                 Text(
                     "Brooklet will ask Miniflux to find a feed for this URL, then update your inbox.",
@@ -90,7 +100,7 @@ fun SubscribeScreen(application: BrookletApplication, accountId: Long, url: Stri
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 20.dp),
                 )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 16.dp)) }
+                error?.let { BrookletInlineError(it, Modifier.padding(top = 16.dp)) }
                 Button(
                     enabled = !working,
                     onClick = {
