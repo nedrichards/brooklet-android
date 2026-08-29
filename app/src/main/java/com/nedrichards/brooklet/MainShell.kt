@@ -90,7 +90,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.CircleShape
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.initializer
@@ -756,7 +755,11 @@ private fun SavedList(
     onOpen: (Entry) -> Unit,
 ) {
     if (entries.isEmpty()) {
-        EmptyEntryState(emptyText, Icons.Rounded.Bookmark, padding)
+        BrookletEmptyState(
+            text = emptyText,
+            icon = Icons.Rounded.Bookmark,
+            modifier = Modifier.padding(padding),
+        )
     } else {
         val listState = rememberLazyListState()
         Box(Modifier.fillMaxSize().padding(padding)) {
