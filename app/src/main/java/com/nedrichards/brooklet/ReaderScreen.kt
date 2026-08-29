@@ -3,18 +3,10 @@ package com.nedrichards.brooklet
 import android.content.Intent
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.util.LruCache
-import android.text.SpannableStringBuilder
-import android.text.style.BackgroundColorSpan
-import android.text.style.ForegroundColorSpan
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.text.method.LinkMovementMethod
-import android.widget.TextView
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.text.HtmlCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -70,14 +62,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.fromHtml
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -238,61 +235,29 @@ internal fun ReaderTopAppBar(
 @Composable
 private fun DocumentBlockView(block: DocumentBlock, articleUrl: String, online: Boolean) {
     when (block) {
-        is DocumentBlock.Heading -> RichArticleText(block.html, block.text, Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 6.dp), if (block.level <= 2) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge)
-        is DocumentBlock.Paragraph -> RichArticleText(block.html, block.text, Modifier.padding(horizontal = 20.dp, vertical = 7.dp), MaterialTheme.typography.bodyLarge)
-        is DocumentBlock.Quote -> RichArticleText(block.html, block.text, Modifier.padding(horizontal = 32.dp, vertical = 12.dp), MaterialTheme.typography.bodyLarge)
+        is DocumentBlock.Heading -> RichArticleText(block.html, block.text, articleUrl, Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 6.dp), if (block.level <= 2) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge)
+        is DocumentBlock.Paragraph -> RichArticleText(block.html, block.text, articleUrl, Modifier.padding(horizontal = 20.dp, vertical = 7.dp), MaterialTheme.typography.bodyLarge)
+        is DocumentBlock.Quote -> RichArticleText(block.html, block.text, articleUrl, Modifier.padding(horizontal = 32.dp, vertical = 12.dp), MaterialTheme.typography.bodyLarge)
         is DocumentBlock.Code -> Text(block.text, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp))
-        is DocumentBlock.ListItem -> Row(Modifier.padding(horizontal = 24.dp, vertical = 3.dp)) { Text(if (block.ordered) "1. " else "• ", fontWeight = FontWeight.Bold); RichArticleText(block.html, block.text, Modifier.weight(1f), MaterialTheme.typography.bodyLarge) }
-        is DocumentBlock.Caption -> RichArticleText(block.html, block.text, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), MaterialTheme.typography.labelMedium)
+        is DocumentBlock.ListItem -> Row(Modifier.padding(horizontal = 24.dp, vertical = 3.dp)) { Text(if (block.ordered) "1. " else "• ", fontWeight = FontWeight.Bold); RichArticleText(block.html, block.text, articleUrl, Modifier.weight(1f), MaterialTheme.typography.bodyLarge) }
+        is DocumentBlock.Caption -> RichArticleText(block.html, block.text, articleUrl, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), MaterialTheme.typography.labelMedium)
         is DocumentBlock.Table -> Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { block.rows.forEach { row -> Text(row.joinToString("  ·  "), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 3.dp)) } }
         is DocumentBlock.Image -> OnlineArticleImage(block, articleUrl, online)
     }
 }
 
 @Composable
-internal fun RichArticleText(html: String?, fallback: String, modifier: Modifier, style: androidx.compose.ui.text.TextStyle) {
-    if (html == null) {
-        Text(fallback, style = style, modifier = modifier)
-    } else {
-        val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-        val linkColor = MaterialTheme.colorScheme.primary.toArgb()
-        val rendered = remember(html) { themeSafeArticleText(html) }
-        AndroidView(
-            modifier = modifier,
-            factory = { context -> TextView(context).apply { movementMethod = LinkMovementMethod.getInstance() } },
-            update = { view ->
-                configureRichArticleText(view, html, rendered, style.fontSize.value, textColor, linkColor)
-            },
-        )
+internal fun RichArticleText(html: String?, fallback: String, articleUrl: String, modifier: Modifier, style: androidx.compose.ui.text.TextStyle) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    val rendered = remember(html, fallback, articleUrl, linkColor) {
+        html?.let { themeSafeArticleText(it, articleUrl, linkColor) } ?: AnnotatedString(fallback)
     }
-}
-
-internal fun configureRichArticleText(
-    view: TextView,
-    html: String,
-    textSizeSp: Float,
-    textColor: Int,
-    linkColor: Int,
-) {
-    configureRichArticleText(view, html, themeSafeArticleText(html), textSizeSp, textColor, linkColor)
-}
-
-private fun configureRichArticleText(
-    view: TextView,
-    html: String,
-    rendered: SpannableStringBuilder,
-    textSizeSp: Float,
-    textColor: Int,
-    linkColor: Int,
-) {
-    if (view.tag != html) {
-        view.text = rendered
-        view.tag = html
-    }
-    view.textSize = textSizeSp
-    view.setTextColor(textColor)
-    view.setLinkTextColor(linkColor)
-    view.setBackgroundColor(Color.TRANSPARENT)
+    Text(
+        text = rendered,
+        style = style,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = modifier,
+    )
 }
 
 /**
@@ -300,16 +265,18 @@ private fun configureRichArticleText(
  * is not allowed to choose foreground/background colours because those values
  * commonly assume a white page and become unreadable in the app's dark theme.
  */
-internal fun themeSafeArticleText(html: String): SpannableStringBuilder {
-    val rendered = SpannableStringBuilder(
-        HtmlCompat.fromHtml(sanitiseInlineArticleHtml(html), HtmlCompat.FROM_HTML_MODE_LEGACY),
+internal fun themeSafeArticleText(
+    html: String,
+    articleUrl: String? = null,
+    linkColor: Color = Color.Unspecified,
+): AnnotatedString = AnnotatedString.fromHtml(
+    htmlString = sanitiseInlineArticleHtml(html, articleUrl),
+    linkStyles = TextLinkStyles(
+        style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
     )
-    rendered.getSpans(0, rendered.length, ForegroundColorSpan::class.java).forEach(rendered::removeSpan)
-    rendered.getSpans(0, rendered.length, BackgroundColorSpan::class.java).forEach(rendered::removeSpan)
-    return rendered
-}
+)
 
-internal fun sanitiseInlineArticleHtml(html: String): String {
+internal fun sanitiseInlineArticleHtml(html: String, articleUrl: String? = null): String {
     val withoutActiveContent = html
         .replace(Regex("(?is)<(script|style)\\b[^>]*>.*?</\\1\\s*>"), "")
         .replace(Regex("(?is)<!--.*?-->"), "")
@@ -321,16 +288,21 @@ internal fun sanitiseInlineArticleHtml(html: String): String {
             "br" -> if (closing) "" else "<br>"
             "a" -> when {
                 closing -> "</a>"
-                else -> absoluteWebHref(match.value)?.let { "<a href=\"$it\">" } ?: "<a>"
+                else -> safeWebHref(match.value, articleUrl)?.let { "<a href=\"$it\">" } ?: "<a>"
             }
             else -> ""
         }
     }
 }
 
-private fun absoluteWebHref(tag: String): String? {
+private fun safeWebHref(tag: String, articleUrl: String?): String? {
     val href = Regex("(?is)\\bhref\\s*=\\s*(['\"])(.*?)\\1").find(tag)?.groupValues?.get(2) ?: return null
-    return href.takeIf { it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true) }
+    val resolved = runCatching {
+        if (articleUrl == null) URI(href) else URI(articleUrl).resolve(href)
+    }.getOrNull() ?: return null
+    return resolved.toString().takeIf {
+        resolved.scheme.equals("https", ignoreCase = true) || resolved.scheme.equals("http", ignoreCase = true)
+    }
         ?.replace("\"", "&quot;")
 }
 
