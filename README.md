@@ -69,3 +69,16 @@ GRADLE_USER_HOME="$PWD/.gradle-local" \
 ```
 
 For the release rehearsal, follow [docs/release.md](docs/release.md). Do not commit generated artifacts, local configuration, signing keys, captures, or logs.
+
+### CI APKs
+
+The Android checks workflow builds every pull request and every commit pushed
+to `main`. After all checks pass, its run summary contains a 14-day
+`brooklet-debug-<commit>` artifact with an installable, debug-signed APK. The
+workflow can also be run manually for any branch from GitHub's Actions tab.
+GitHub does not run workflows for arbitrary commits that have not been pushed.
+
+Treat CI APKs as short-lived test builds: they use the debug application ID and
+debug signing certificate, are not optimized release binaries, and must not be
+published to an app store. A contributor from a fork cannot obtain repository
+secrets through this pull-request workflow.
