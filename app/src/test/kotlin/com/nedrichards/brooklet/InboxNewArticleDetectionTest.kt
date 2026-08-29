@@ -28,4 +28,33 @@ class InboxNewArticleDetectionTest {
             countNewLeadingInboxEntries(setOf(3, 2, 1), listOf(3, 2, 4, 1)),
         )
     }
+
+    @Test fun trackerBoundsRemovedHistoryWithoutForgettingTheLiveInbox() {
+        val tracker = InboxObservationTracker(recentRemovalLimit = 8)
+        tracker.observe((1L..100L).toList())
+
+        repeat(20) { removed ->
+            tracker.observe(((removed + 2L)..100L).toList())
+        }
+
+        assertEquals(8, tracker.retainedRemovalCount)
+        assertEquals(0, tracker.observe((21L..100L).toList()))
+    }
+
+    @Test fun largeUndoBatchIsNotReportedAsNewWithoutRetainingItForever() {
+        val tracker = InboxObservationTracker(recentRemovalLimit = 8)
+        val original = (1L..1_000L).toList()
+        tracker.observe(original)
+        tracker.observe(emptyList())
+
+        assertEquals(0, tracker.observe(original, restoredIds = original.toSet()))
+        assertEquals(0, tracker.retainedRemovalCount)
+    }
+
+    @Test fun trackerStillReportsGenuineLeadingInsertions() {
+        val tracker = InboxObservationTracker()
+        tracker.observe(listOf(3L, 2L, 1L))
+
+        assertEquals(2, tracker.observe(listOf(5L, 4L, 3L, 2L, 1L)))
+    }
 }

@@ -59,9 +59,11 @@ fun SettingsScreen(
     onMessage: (String) -> Unit,
 ) {
     val dao = application.database.dao()
-    val account by dao.observeAccount().collectAsStateWithLifecycle(initialValue = null)
+    val accountFlow = remember(dao) { dao.observeAccount() }
+    val syncFlow = remember(accountId, dao) { dao.observeSyncState(accountId) }
+    val account by accountFlow.collectAsStateWithLifecycle(initialValue = null)
     val pending by application.repository.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
-    val sync by dao.observeSyncState(accountId).collectAsStateWithLifecycle(initialValue = null)
+    val sync by syncFlow.collectAsStateWithLifecycle(initialValue = null)
     val syncActivity by application.scheduler.activity.collectAsStateWithLifecycle(initialValue = SyncActivity())
     var route by remember { mutableStateOf("MINIFLUX") }
     var endpoint by remember { mutableStateOf("") }

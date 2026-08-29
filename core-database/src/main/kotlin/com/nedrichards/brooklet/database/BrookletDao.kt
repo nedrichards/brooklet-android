@@ -18,6 +18,7 @@ abstract class BrookletDao {
     @Upsert abstract suspend fun upsertCursor(value: SyncCursorEntity)
     @Upsert abstract suspend fun upsertSyncState(value: SyncStateEntity)
     @Upsert abstract suspend fun upsertMutation(value: PendingMutationEntity)
+    @Upsert protected abstract suspend fun upsertMutations(values: List<PendingMutationEntity>)
     @Upsert protected abstract suspend fun upsertKarakeep(value: PendingKarakeepEntity)
     @Upsert abstract suspend fun upsertKarakeepConfig(value: KarakeepConfigEntity)
     @Query("SELECT * FROM karakeep_config WHERE accountId = :accountId") abstract suspend fun karakeepConfig(accountId: Long): KarakeepConfigEntity?
@@ -135,6 +136,10 @@ abstract class BrookletDao {
     protected abstract suspend fun updateRead(accountId: Long, entryId: Long, read: Boolean, now: Long): Int
     @Query("UPDATE entries SET starred = :starred WHERE accountId = :accountId AND id = :entryId")
     protected abstract suspend fun updateStar(accountId: Long, entryId: Long, starred: Boolean)
+    @Query("SELECT id FROM entries WHERE accountId = :accountId AND id IN (:entryIds)")
+    protected abstract suspend fun existingEntryIds(accountId: Long, entryIds: List<Long>): List<Long>
+    @Query("UPDATE entries SET read = :read, lastOpenedAt = CASE WHEN :read THEN :now ELSE lastOpenedAt END WHERE accountId = :accountId AND id IN (:entryIds)")
+    protected abstract suspend fun updateReadMany(accountId: Long, entryIds: List<Long>, read: Boolean, now: Long): Int
 
     @Transaction
     open suspend fun setRead(accountId: Long, entryId: Long, read: Boolean, now: Long) {
@@ -151,10 +156,13 @@ abstract class BrookletDao {
 
     @Transaction
     open suspend fun setReadMany(accountId: Long, entryIds: List<Long>, read: Boolean, now: Long) {
-        entryIds.forEach { entryId ->
-            if (updateRead(accountId, entryId, read, now) == 1) {
-                upsertMutation(PendingMutationEntity(accountId, entryId, "READ", read, now))
-            }
+        entryIds.chunked(SQLITE_BIND_CHUNK).forEach { candidates ->
+            val existing = existingEntryIds(accountId, candidates)
+            if (existing.isEmpty()) return@forEach
+            updateReadMany(accountId, existing, read, now)
+            upsertMutations(existing.map { entryId ->
+                PendingMutationEntity(accountId, entryId, "READ", read, now)
+            })
         }
     }
 
@@ -204,4 +212,9 @@ abstract class BrookletDao {
         )
     """)
     abstract suspend fun pruneReadEntries(accountId: Long, cutoff: Long, keepAtMost: Int = 5000): Int
+
+    private companion object {
+        /** Safely below the legacy SQLite 999-variable limit used by minSdk devices. */
+        const val SQLITE_BIND_CHUNK = 900
+    }
 }

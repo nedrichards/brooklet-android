@@ -18,6 +18,15 @@ class SyncSchedulerTest {
     }
 
     @Test
+    fun allRealSyncIntentsShareOneSerialPolicySet() {
+        assertEquals(ExistingWorkPolicy.REPLACE, FOREGROUND_SYNC_POLICY)
+        assertEquals(ExistingWorkPolicy.KEEP, PERIODIC_DELIVERY_POLICY)
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, REFRESH_FOLLOW_UP_POLICY)
+        assertEquals(120L, WorkManagerSyncScheduler.PERIODIC_REPEAT_MINUTES)
+        assertEquals(30L, WorkManagerSyncScheduler.PERIODIC_FLEX_MINUTES)
+    }
+
+    @Test
     fun retryPolicyDependsOnUserIntent() {
         assertTrue(SyncWorkIntent.ACTION_DELIVERY.retriesTransientFailure)
         assertTrue(SyncWorkIntent.USER_SYNC.retriesTransientFailure)
@@ -25,6 +34,8 @@ class SyncSchedulerTest {
         assertFalse(SyncWorkIntent.FOREGROUND.retriesTransientFailure)
         assertFalse(SyncWorkIntent.PERIODIC.retriesTransientFailure)
         assertFalse(SyncWorkIntent.REFRESH_FOLLOW_UP.retriesTransientFailure)
+        assertTrue(SyncWorkIntent.REFRESH_FOLLOW_UP.entriesOnly)
+        assertFalse(SyncWorkIntent.MANUAL_REFRESH.entriesOnly)
     }
 
     @Test

@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.nedrichards.brooklet.model.Entry
 import com.nedrichards.brooklet.model.Feed
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 internal enum class SearchReadFilter { ANY, UNREAD, READ }
@@ -100,6 +101,7 @@ internal fun ArticleSearchScreen(
         feedId,
         savedEntryIds,
     ) {
+        delay(SEARCH_DEBOUNCE_MS)
         value = withContext(Dispatchers.Default) {
             filterSearchEntries(entries, query, readFilter, savedOnly, feedId, savedEntryIds)
         }
@@ -227,6 +229,8 @@ internal fun ArticleSearchScreen(
         }
     }
 }
+
+private const val SEARCH_DEBOUNCE_MS = 125L
 
 @Composable
 private fun SearchEntryResults(

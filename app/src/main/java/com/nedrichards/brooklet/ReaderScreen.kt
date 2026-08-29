@@ -114,8 +114,10 @@ fun ReaderScreen(
     onNext: (() -> Unit)?,
     snackbarHost: @Composable () -> Unit = {},
 ) {
-    val entry by repository.entry(accountId, entryId).collectAsStateWithLifecycle(initialValue = null)
-    val position by repository.position(accountId, entryId).collectAsStateWithLifecycle(initialValue = null)
+    val entryFlow = remember(accountId, entryId, repository) { repository.entry(accountId, entryId) }
+    val positionFlow = remember(accountId, entryId, repository) { repository.position(accountId, entryId) }
+    val entry by entryFlow.collectAsStateWithLifecycle(initialValue = null)
+    val position by positionFlow.collectAsStateWithLifecycle(initialValue = null)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current

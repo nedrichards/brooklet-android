@@ -130,6 +130,37 @@ private data class UndoViewportAnchor(
 internal fun countNewLeadingInboxEntries(observedIds: Set<Long>?, currentIds: List<Long>): Int =
     observedIds?.let { observed -> currentIds.takeWhile { it !in observed }.size } ?: 0
 
+/**
+ * Remembers the live Inbox plus a small window of removals, rather than every
+ * ID seen for the lifetime of the process. The active Undo batch is supplied
+ * separately so even a large mark-all restoration is never reported as new.
+ */
+internal class InboxObservationTracker(
+    private val recentRemovalLimit: Int = 256,
+) {
+    private var currentIds: Set<Long>? = null
+    private val recentRemovals = LinkedHashSet<Long>()
+
+    fun observe(newIds: List<Long>, restoredIds: Set<Long> = emptySet()): Int {
+        val previous = currentIds
+        val newCount = previous?.let { knownCurrent ->
+            newIds.takeWhile { id ->
+                id !in knownCurrent && id !in recentRemovals && id !in restoredIds
+            }.size
+        } ?: 0
+        val newSet = newIds.toSet()
+        previous?.forEach { id -> if (id !in newSet) recentRemovals += id }
+        recentRemovals.removeAll(newSet)
+        while (recentRemovals.size > recentRemovalLimit) {
+            recentRemovals.remove(recentRemovals.first())
+        }
+        currentIds = newSet
+        return newCount
+    }
+
+    internal val retainedRemovalCount: Int get() = recentRemovals.size
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainShell(application: BrookletApplication, accountId: Long) {
@@ -172,18 +203,23 @@ internal fun MainShellContent(
     var inboxActionsOpen by remember { mutableStateOf(false) }
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
     var readerOrder by remember { mutableStateOf(emptyList<Long>()) }
-    val inbox by repository.inbox(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val inboxFlow = remember(accountId, repository) { repository.inbox(accountId) }
+    val savedFlow = remember(accountId, repository) { repository.saved(accountId) }
+    val allEntriesFlow = remember(accountId, repository) { repository.allEntries(accountId) }
+    val categoriesFlow = remember(accountId, repository) { repository.categories(accountId) }
+    val feedsFlow = remember(accountId, repository) { repository.feeds(accountId) }
+    val inbox by inboxFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val savedState = if (destination == Destination.SAVED || searchDestination == Destination.LIBRARY) {
-        repository.saved(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        savedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val allState = if (destination == Destination.LIBRARY) {
-        repository.allEntries(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        allEntriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val categoriesState = if (destination == Destination.LIBRARY) {
-        repository.categories(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        categoriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val feedsState = if (destination == Destination.LIBRARY || searchDestination != null) {
-        repository.feeds(accountId).collectAsStateWithLifecycle(initialValue = emptyList())
+        feedsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val saved by savedState
     val all by allState
@@ -494,6 +530,7 @@ internal fun MainShellContent(
                             listState = inboxListState,
                             onScrollToTop = jumpInboxToTop,
                             floatingUiBlocked = floatingUiBlocked,
+                            restoredEntryIds = undoUiState.restoredEntryIds,
                         ) { open(it, inbox) }
                         Destination.SAVED -> SavedList(
                             entries = saved,
@@ -553,9 +590,10 @@ internal fun EntryList(
     listState: LazyListState = rememberLazyListState(),
     onScrollToTop: (() -> Unit)? = null,
     floatingUiBlocked: Boolean = false,
+    restoredEntryIds: Set<Long> = emptySet(),
     onOpen: (Entry) -> Unit,
 ) {
-    var observedEntryIds by remember { mutableStateOf<Set<Long>?>(null) }
+    val observationTracker = remember { InboxObservationTracker() }
     var detectedNewEntries by remember { mutableLongStateOf(0) }
     var queuedNewEntries by remember { mutableLongStateOf(0) }
     var inboxLeadingHeaderVisible by remember(listState) {
@@ -599,16 +637,9 @@ internal fun EntryList(
         onRefresh()
     }
 
-    androidx.compose.runtime.LaunchedEffect(entries) {
+    androidx.compose.runtime.LaunchedEffect(entries, restoredEntryIds) {
         val currentIds = entries.map { it.id }
-        observedEntryIds?.let { observedIds ->
-            // Only count genuinely unseen rows at the leading edge. Keeping a
-            // cumulative set means an Undo can reinsert an article without it
-            // being mistaken for something fetched by a sync.
-            val newLeadingEntries = countNewLeadingInboxEntries(observedIds, currentIds)
-            detectedNewEntries += newLeadingEntries.toLong()
-        }
-        observedEntryIds = observedEntryIds.orEmpty() + currentIds
+        detectedNewEntries += observationTracker.observe(currentIds, restoredEntryIds)
     }
     androidx.compose.runtime.LaunchedEffect(detectedNewEntries) {
         if (detectedNewEntries == 0L) return@LaunchedEffect

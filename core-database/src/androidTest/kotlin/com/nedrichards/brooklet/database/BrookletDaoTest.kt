@@ -71,6 +71,17 @@ class BrookletDaoTest {
         assertTrue(dao.pendingMutations().all { !it.desiredValue })
     }
 
+    @Test fun bulkReadMutationChunksLargeInboxesAndIgnoresMissingRows() = runBlocking {
+        val entries = (1L..1_005L).map { id -> entry(accountId = 1, id = id, read = false) }
+        dao.upsertEntries(entries)
+
+        dao.setReadMany(1, entries.map { it.id } + 9_999L, read = true, now = 100)
+
+        assertTrue(dao.observeInbox(1).first().isEmpty())
+        assertEquals(1_005, dao.pendingMutations().size)
+        assertTrue(dao.pendingMutations().none { it.entryId == 9_999L })
+    }
+
     @Test fun inboxIsScopedToRequestedAccount() = runBlocking {
         dao.upsertEntries(
             listOf(
