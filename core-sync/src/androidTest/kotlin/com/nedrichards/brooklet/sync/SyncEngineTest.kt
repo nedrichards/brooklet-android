@@ -146,6 +146,33 @@ class SyncEngineTest {
         assertEquals(listOf(false), dao.pendingMutations().map { it.desiredValue })
     }
 
+    @Test fun refreshFollowUpPullsEntriesWithoutRepeatingMetadataOrPruning() = runBlocking {
+        val dao = database.dao()
+        val encrypted = cipher.encrypt("test-token")
+        dao.upsertAccount(
+            AccountEntity(
+                serverUrl = server.url("/").toString(),
+                username = "nick",
+                tokenCiphertext = encrypted.ciphertext,
+                tokenIv = encrypted.iv,
+                serverVersion = "2.3.2",
+                createdAt = 0,
+            ),
+        )
+        server.enqueue(jsonResponse("""{"total":0,"entries":[]}"""))
+
+        SyncEngine(
+            dao = dao,
+            cipher = cipher,
+            clock = { 999 },
+            minifluxClient = { url, token -> MinifluxClient(url, token, allowInsecureForTests = true) },
+        ).run(entriesOnly = true)
+
+        assertEquals(1, server.requestCount)
+        assertEquals("/v1/entries", server.takeRequest().requestUrl?.encodedPath)
+        assertEquals("COMPLETE", dao.observeSyncState(1).first()?.phase)
+    }
+
     private fun entry(read: Boolean) = EntryEntity(
         accountId = 1,
         id = 7,

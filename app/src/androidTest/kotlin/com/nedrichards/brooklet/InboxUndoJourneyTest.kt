@@ -29,6 +29,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.lifecycle.SavedStateHandle
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import com.nedrichards.brooklet.database.BrookletDatabase
 import com.nedrichards.brooklet.database.EntryEntity
 import com.nedrichards.brooklet.designsystem.BrookletTheme
@@ -282,6 +283,9 @@ class InboxUndoJourneyTest {
         compose.onNodeWithText("Search").performClick()
         compose.onNodeWithTag("article-search-field").performTextInput("Needle")
 
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Needle unread").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("Needle unread").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Needle read").fetchSemanticsNodes().isEmpty())
     }
@@ -300,6 +304,9 @@ class InboxUndoJourneyTest {
         compose.onNodeWithTag("search-filter-unread").assertIsDisplayed()
         compose.onNodeWithTag("search-filter-read").performClick()
         compose.onNodeWithTag("search-filter-saved").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Needle saved").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("Needle saved").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Needle unread").fetchSemanticsNodes().isEmpty())
     }

@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.withLock
 internal enum class SyncWorkIntent(
     val pullsRemoteState: Boolean,
     val refreshesFeeds: Boolean = false,
+    val entriesOnly: Boolean = false,
     val retriesTransientFailure: Boolean,
 ) {
     ACTION_DELIVERY(pullsRemoteState = false, retriesTransientFailure = true),
@@ -22,7 +23,7 @@ internal enum class SyncWorkIntent(
     USER_SYNC(pullsRemoteState = true, retriesTransientFailure = true),
     MANUAL_REFRESH(pullsRemoteState = true, refreshesFeeds = true, retriesTransientFailure = true),
     PERIODIC(pullsRemoteState = true, retriesTransientFailure = false),
-    REFRESH_FOLLOW_UP(pullsRemoteState = true, retriesTransientFailure = false),
+    REFRESH_FOLLOW_UP(pullsRemoteState = true, entriesOnly = true, retriesTransientFailure = false),
     ;
 
     fun asInputData(): Data = workDataOf(INPUT_KEY to name)
@@ -43,6 +44,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             SyncEngine(database.dao(), TokenCipher()).run(
                 refreshFeeds = intent.refreshesFeeds,
                 pullRemoteState = intent.pullsRemoteState,
+                entriesOnly = intent.entriesOnly,
             )
             if (intent.refreshesFeeds) WorkManagerSyncScheduler(applicationContext).enqueueRefreshFollowUp()
             Result.success()
@@ -66,6 +68,14 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 class ActionSyncDebounceWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         WorkManagerSyncScheduler(applicationContext).enqueueActionWorker()
+        return Result.success()
+    }
+}
+
+/** Keeps periodic constraints separate while routing real sync work through one unique chain. */
+class PeriodicSyncTriggerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        WorkManagerSyncScheduler(applicationContext).enqueuePeriodicSync()
         return Result.success()
     }
 }

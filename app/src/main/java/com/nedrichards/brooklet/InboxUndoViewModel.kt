@@ -40,6 +40,7 @@ internal data class InboxUndoUiState(
     val pending: PendingReadUndo? = null,
     val confirmation: String? = null,
     val error: String? = null,
+    val restoredEntryIds: Set<Long> = emptySet(),
 )
 
 /**
@@ -97,7 +98,10 @@ internal class InboxUndoViewModel(
 
     fun confirmationShown(message: String) {
         if (_uiState.value.confirmation == message) {
-            _uiState.value = _uiState.value.copy(confirmation = null)
+            _uiState.value = _uiState.value.copy(
+                confirmation = null,
+                restoredEntryIds = emptySet(),
+            )
         }
     }
 
@@ -137,6 +141,7 @@ internal class InboxUndoViewModel(
                         "Restored ${pending.entries.size} articles as unread"
                     },
                     error = null,
+                    restoredEntryIds = pending.entries.keys,
                 )
             }
             .onFailure {
@@ -173,7 +178,11 @@ internal class InboxUndoViewModel(
             savedStateHandle.remove<String>(SINGLE_ENTRY_TITLE)
         }
         savedStateHandle[RETRY] = pending.retry
-        _uiState.value = _uiState.value.copy(pending = pending, confirmation = null)
+        _uiState.value = _uiState.value.copy(
+            pending = pending,
+            confirmation = null,
+            restoredEntryIds = emptySet(),
+        )
     }
 
     private fun clearPending() {

@@ -46,6 +46,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.nedrichards.brooklet.database.AccountEntity
 import com.nedrichards.brooklet.database.TokenCipher
+import com.nedrichards.brooklet.designsystem.BrookletInlineError
+import com.nedrichards.brooklet.designsystem.BrookletSpacing
+import com.nedrichards.brooklet.designsystem.BrookletContextIcon
+import com.nedrichards.brooklet.designsystem.BrookletWidths
 import com.nedrichards.brooklet.network.MinifluxClient
 import kotlinx.coroutines.launch
 
@@ -86,15 +90,15 @@ fun SetupScreen(application: BrookletApplication) {
     }
     Box(Modifier.fillMaxSize()) {
     Column(
-        Modifier.widthIn(max = 560.dp).fillMaxWidth().align(Alignment.Center)
-            .verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 48.dp),
+        Modifier.widthIn(max = BrookletWidths.form).fillMaxWidth().align(Alignment.Center)
+            .verticalScroll(rememberScrollState()).padding(horizontal = BrookletSpacing.screenComfortable, vertical = 48.dp),
         verticalArrangement = Arrangement.Center,
     ) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(64.dp)) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.WaterDrop, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(32.dp))
-            }
-        }
+        BrookletContextIcon(
+            icon = Icons.Rounded.WaterDrop,
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
         Spacer(Modifier.height(20.dp))
         Text("Brooklet", style = MaterialTheme.typography.headlineLarge)
         Text("Your Miniflux inbox, ready even when the network isn’t.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -129,7 +133,7 @@ fun SetupScreen(application: BrookletApplication) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { submit() }),
         )
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp)) }
+        error?.let { BrookletInlineError(it, Modifier.padding(top = 12.dp)) }
         Spacer(Modifier.height(20.dp))
         Button(
             enabled = canSubmit,

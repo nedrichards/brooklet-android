@@ -46,22 +46,29 @@ import com.nedrichards.brooklet.database.TokenCipher
 import com.nedrichards.brooklet.designsystem.BrookletActionRow
 import com.nedrichards.brooklet.designsystem.BrookletSection
 import com.nedrichards.brooklet.designsystem.BrookletSpacing
+import com.nedrichards.brooklet.designsystem.BrookletWidths
 import com.nedrichards.brooklet.sync.SyncActivity
 import com.nedrichards.brooklet.sync.SyncActivityState
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: PaddingValues) {
+fun SettingsScreen(
+    application: BrookletApplication,
+    accountId: Long,
+    padding: PaddingValues,
+    onMessage: (String) -> Unit,
+) {
     val dao = application.database.dao()
-    val account by dao.observeAccount().collectAsStateWithLifecycle(initialValue = null)
+    val accountFlow = remember(dao) { dao.observeAccount() }
+    val syncFlow = remember(accountId, dao) { dao.observeSyncState(accountId) }
+    val account by accountFlow.collectAsStateWithLifecycle(initialValue = null)
     val pending by application.repository.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
-    val sync by dao.observeSyncState(accountId).collectAsStateWithLifecycle(initialValue = null)
+    val sync by syncFlow.collectAsStateWithLifecycle(initialValue = null)
     val syncActivity by application.scheduler.activity.collectAsStateWithLifecycle(initialValue = SyncActivity())
     var route by remember { mutableStateOf("MINIFLUX") }
     var endpoint by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     var retention by remember { mutableStateOf<Int?>(30) }
-    var message by remember { mutableStateOf<String?>(null) }
     var disconnectConfirmation by remember { mutableStateOf(false) }
     val apiKeyFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -87,8 +94,8 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
 
     Box(Modifier.fillMaxSize().padding(padding)) {
         Column(
-            Modifier.widthIn(max = 720.dp).fillMaxWidth().align(Alignment.TopCenter)
-                .verticalScroll(rememberScrollState()).padding(BrookletSpacing.screen),
+            Modifier.widthIn(max = BrookletWidths.settings).fillMaxWidth().align(Alignment.TopCenter)
+                .verticalScroll(rememberScrollState()).padding(BrookletSpacing.screenCompact),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             BrookletSection("Account") {
@@ -130,8 +137,8 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                 title = "Send to Karakeep",
                 supportingText = "Choose how Brooklet delivers articles. This never changes their read or starred state.",
             ) {
-                Choice("Through Miniflux", route == "MINIFLUX") { route = "MINIFLUX"; message = null }
-                Choice("Direct from this device", route == "DIRECT") { route = "DIRECT"; message = null }
+                Choice("Through Miniflux", route == "MINIFLUX") { route = "MINIFLUX" }
+                Choice("Direct from this device", route == "DIRECT") { route = "DIRECT" }
                 if (route == "MINIFLUX") {
                     Text(
                         "Uses the save integration configured in Miniflux. Private-network delivery may require INTEGRATION_ALLOW_PRIVATE_NETWORKS=1 on the Miniflux server.",
@@ -141,7 +148,7 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                 } else {
                     OutlinedTextField(
                         endpoint,
-                        { endpoint = it; message = null },
+                        { endpoint = it },
                         Modifier.fillMaxWidth(),
                         label = { Text("Bookmarks endpoint") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
@@ -150,7 +157,7 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                     )
                     OutlinedTextField(
                         apiKey,
-                        { apiKey = it; message = null },
+                        { apiKey = it },
                         Modifier.fillMaxWidth().focusRequester(apiKeyFocus),
                         label = { Text("API key (blank keeps current key)") },
                         visualTransformation = PasswordVisualTransformation(),
@@ -165,8 +172,8 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                 title = "Offline storage",
                 supportingText = "Unread, starred, recently opened, and pending articles are always protected.",
             ) {
-                listOf(7, 30, 90).forEach { days -> Choice("Keep read articles for $days days", retention == days) { retention = days; message = null } }
-                Choice("Keep read articles indefinitely", retention == null) { retention = null; message = null }
+                listOf(7, 30, 90).forEach { days -> Choice("Keep read articles for $days days", retention == days) { retention = days } }
+                Choice("Keep read articles indefinitely", retention == null) { retention = null }
                 Text("Article images are loaded from the network and never stored on disk.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
@@ -184,11 +191,10 @@ fun SettingsScreen(application: BrookletApplication, accountId: Long, padding: P
                         ))
                         dao.upsertStoragePolicy(StoragePolicyEntity(accountId, retention))
                         apiKey = ""
-                        message = "Settings saved"
+                        onMessage("Settings saved")
                     }
                 },
             ) { Text("Save settings") }
-            message?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium) }
 
             BrookletSection("Diagnostics") {
                 Text("Database available", style = MaterialTheme.typography.bodyMedium)
