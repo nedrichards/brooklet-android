@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,3 +25,11 @@ jobs:
           :core-model:test :core-network:test :core-sync:test
           :app-phone:testDebugUnitTest lintDebug
           :app-phone:assembleDebug :app-phone:assembleRelease
+      - name: Upload installable debug APK
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: brooklet-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: app/build/outputs/apk/debug/app-phone-debug.apk
+          if-no-files-found: error
+          retention-days: 14
