@@ -33,6 +33,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.nedrichards.brooklet.database.BrookletDatabase
 import com.nedrichards.brooklet.database.EntryEntity
 import com.nedrichards.brooklet.designsystem.BrookletTheme
+import com.nedrichards.brooklet.model.DocumentBlock
+import com.nedrichards.brooklet.model.HtmlDocumentParser
 import com.nedrichards.brooklet.sync.EntryRepository
 import com.nedrichards.brooklet.sync.SyncActivity
 import com.nedrichards.brooklet.sync.SyncScheduler
@@ -259,6 +261,23 @@ class InboxUndoJourneyTest {
 
         val link = rendered.getLinkAnnotations(0, rendered.length).single().item as LinkAnnotation.Url
         assertEquals("https://example.com/next", link.url)
+        assertEquals(Color.Cyan, link.styles?.style?.color)
+    }
+
+    @Test fun phoronixStyleUnwrappedLinksBecomeComposeLinkAnnotations() {
+        val paragraph = HtmlDocumentParser.parse(
+            """<div class="content">Intro.<br>Among the changes, the <a href="/news/driver">LED driver</a> was merged.</div>""",
+        )[1] as DocumentBlock.Paragraph
+
+        val rendered = themeSafeArticleText(
+            html = paragraph.html!!,
+            articleUrl = "https://example.com/news/current",
+            linkColor = Color.Cyan,
+        )
+
+        assertEquals("Among the changes, the LED driver was merged.", rendered.text)
+        val link = rendered.getLinkAnnotations(0, rendered.length).single().item as LinkAnnotation.Url
+        assertEquals("https://example.com/news/driver", link.url)
         assertEquals(Color.Cyan, link.styles?.style?.color)
     }
 

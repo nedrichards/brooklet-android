@@ -38,6 +38,28 @@ class HtmlDocumentParserTest {
         assertEquals(DocumentBlock.Paragraph("Wine 11.16 is out with VA-API decoding and better ARM64 support."), blocks[1])
     }
 
+    @Test fun `keeps links in Phoronix style unwrapped prose`() {
+        val blocks = HtmlDocumentParser.parse(
+            """<div class="content">
+                Intro without a link.<br><br>
+                Among the changes, the <a href="https://example.com/driver">LED driver</a> was merged and it powers <a href="/review/mini-pc">a Linux mini PC</a>.
+                <br><p align="center"><img src="https://example.com/mini-pc.jpg" alt="Mini PC"></p><br>
+                More details are in <a href="https://example.com/pull">this pull</a>.
+                </div>""".trimIndent(),
+        )
+
+        assertEquals(DocumentBlock.Paragraph("Intro without a link."), blocks[0])
+        assertEquals(
+            "Among the changes, the LED driver was merged and it powers a Linux mini PC .",
+            (blocks[1] as DocumentBlock.Paragraph).text,
+        )
+        assertTrue((blocks[1] as DocumentBlock.Paragraph).html!!.contains("<a href=\"https://example.com/driver\">LED driver</a>"))
+        assertTrue((blocks[1] as DocumentBlock.Paragraph).html!!.contains("<a href=\"/review/mini-pc\">a Linux mini PC</a>"))
+        assertEquals(DocumentBlock.Image("https://example.com/mini-pc.jpg", "Mini PC"), blocks[2])
+        assertEquals("More details are in this pull .", (blocks[3] as DocumentBlock.Paragraph).text)
+        assertTrue((blocks[3] as DocumentBlock.Paragraph).html!!.contains("<a href=\"https://example.com/pull\">this pull</a>"))
+    }
+
     @Test fun `keeps inline markup plus ordered lists captions and tables`() {
         val blocks = HtmlDocumentParser.parse("<ol><li>One</li><li><a href='https://example.com'>Two</a></li></ol><figure><img src='x'><figcaption>A <em>caption</em></figcaption></figure><table><tr><th>Version</th><th>Status</th></tr><tr><td>1</td><td>Ready</td></tr></table>")
 

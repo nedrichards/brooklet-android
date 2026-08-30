@@ -1,11 +1,25 @@
 package com.nedrichards.brooklet
 
+import com.nedrichards.brooklet.model.DocumentBlock
+import com.nedrichards.brooklet.model.HtmlDocumentParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ArticleHtmlSanitiserTest {
+    @Test fun preservesSafeLinksFromPhoronixStyleUnwrappedProse() {
+        val paragraph = HtmlDocumentParser.parse(
+            """<div class="content">See <a href="/news/next">the next article</a> and <a href="javascript:alert(1)">unsafe text</a>.<br></div>""",
+        ).single() as DocumentBlock.Paragraph
+
+        val result = sanitiseInlineArticleHtml(paragraph.html!!, "https://example.com/news/current")
+
+        assertTrue(result.contains("<a href=\"https://example.com/news/next\">the next article</a>"))
+        assertTrue(result.contains("<a>unsafe text</a>"))
+        assertFalse(result.contains("javascript:"))
+    }
+
     @Test fun removesSourceColoursBackgroundsAndActiveContent() {
         val result = sanitiseInlineArticleHtml(
             """<span style="color:black;background:white"><font color="#000">Text</font></span>""" +

@@ -4,6 +4,7 @@ package com.nedrichards.brooklet.model
 object HtmlDocumentParser {
     private val blocks = Regex("<(h[1-6]|p|blockquote|pre|li|figcaption|table)(?:\\s[^>]*)?>(.*?)</\\1>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
     private val images = Regex("<img(?:\\s[^>]*)?>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val lineBreaks = Regex("<br(?:\\s[^>]*)?/?>", RegexOption.IGNORE_CASE)
     private val tags = Regex("<[^>]+>")
     private val spaces = Regex("\\s+")
     // Decode each entity in one pass: decoding &amp; first would accidentally turn
@@ -14,7 +15,9 @@ object HtmlDocumentParser {
     )
 
     fun parse(html: String): List<DocumentBlock> {
-        val textBlocks = blocks.findAll(html).mapNotNull { match ->
+        val blockMatches = blocks.findAll(html).toList()
+        val imageMatches = images.findAll(html).toList()
+        val textBlocks = blockMatches.mapNotNull { match ->
             val tag = match.groups[1]!!.value.lowercase()
             val content = match.groups[2]?.value.orEmpty()
             val block = when {
@@ -31,19 +34,16 @@ object HtmlDocumentParser {
         }
         // Images are scanned independently so an <img> nested inside a paragraph
         // is not swallowed by the paragraph match.
-        val imageBlocks = images.findAll(html).mapNotNull { match ->
+        val imageBlocks = imageMatches.mapNotNull { match ->
             val source = attribute(match.value, "src") ?: attribute(match.value, "data-src")
             source?.let { match.range.first to DocumentBlock.Image(it, attribute(match.value, "alt")) }
         }
-        // Some feeds put their prose directly after an image or <br> rather than
-        // wrapping it in paragraphs. Keep that text too: an image must not make
-        // the reader discard the rest of an entry's content.
-        val unstructuredHtml = blocks.replace(html) { " ".repeat(it.value.length) }
-        val unstructuredText = text(unstructuredHtml)
-        val unstructuredBlock = unstructuredText.takeIf(String::isNotBlank)?.let {
-            firstTextPosition(unstructuredHtml) to DocumentBlock.Paragraph(it)
-        }
-        val result = (textBlocks + imageBlocks + listOfNotNull(unstructuredBlock))
+        // Some feeds use <br>-separated prose rather than paragraph elements.
+        // Keep each loose run, including its supported inline markup, while
+        // masking recognised blocks and images so their content is not duplicated.
+        val unstructuredHtml = mask(html, (blockMatches + imageMatches).map(MatchResult::range))
+        val unstructuredBlocks = unstructuredParagraphs(unstructuredHtml)
+        val result = (textBlocks + imageBlocks + unstructuredBlocks)
             .sortedBy { it.first }
             .map { it.second }
             .filterNot(::isBlank)
@@ -64,6 +64,31 @@ object HtmlDocumentParser {
     private fun attribute(tag: String, name: String) = Regex("\\b$name\\s*=\\s*(['\"])(.*?)\\1", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(2)?.let(::decode)
     private fun text(value: String) = decode(tags.replace(value, " ")).replace(spaces, " ").trim()
     private fun richHtml(value: String) = value.takeIf { Regex("</?(a|strong|b|em|i|code|br)(?:\\s|>|/)", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+
+    private fun mask(value: String, ranges: List<IntRange>): String {
+        val masked = value.toCharArray()
+        ranges.forEach { range -> range.forEach { index -> masked[index] = ' ' } }
+        return masked.concatToString()
+    }
+
+    private fun unstructuredParagraphs(value: String): List<Pair<Int, DocumentBlock.Paragraph>> {
+        val result = mutableListOf<Pair<Int, DocumentBlock.Paragraph>>()
+        var start = 0
+        fun add(end: Int) {
+            val html = value.substring(start, end)
+            val plainText = text(html)
+            if (plainText.isNotBlank()) {
+                result += start + firstTextPosition(html) to DocumentBlock.Paragraph(plainText, richHtml(html))
+            }
+        }
+        lineBreaks.findAll(value).forEach { match ->
+            add(match.range.first)
+            start = match.range.last + 1
+        }
+        add(value.length)
+        return result
+    }
+
     private fun table(value: String): DocumentBlock.Table {
         val rows = Regex("<tr(?:\\s[^>]*)?>(.*?)</tr>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).findAll(value).map { row ->
             Regex("<t[hd](?:\\s[^>]*)?>(.*?)</t[hd]>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).findAll(row.groups[1]!!.value).map { text(it.groups[1]!!.value) }.filter(String::isNotBlank).toList()
