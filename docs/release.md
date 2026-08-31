@@ -25,18 +25,30 @@ Use JDK 17 and a private local Gradle cache:
 JAVA_HOME=/path/to/jdk-17 \
 GRADLE_USER_HOME="$PWD/.gradle-local" \
 ./gradlew :core-model:test :core-network:test :core-sync:test \
-  :app-phone:testDebugUnitTest lintDebug :app-phone:assembleDebug :app-phone:assembleRelease
+  :app-phone:testDebugUnitTest :app-wear:testDebugUnitTest lintDebug \
+  :app-phone:assembleDebug :app-wear:assembleDebug \
+  :app-phone:assembleRelease :app-wear:assembleRelease
 ```
 
 Exercise setup, offline reading, pull to refresh, share-to-subscribe, Keep
 unread, Karakeep, disconnect/delete-local-data, and a failed network request on
 a physical device. Test the minified release build, not only debug.
 
+For Wear, use a 41 mm round profile and a physical Pixel Watch 2 before release.
+Verify phone-confirmed setup, crown scrolling, swipe-to-reveal versus swipe-back,
+TalkBack actions, Tile deep links, offline body reading, Keep unread, cache
+limits, and independent watch deletion. With Bluetooth disabled, confirm direct
+Wi-Fi or LTE sync and action delivery. Capture WorkManager/battery evidence that
+an unchanged six-hour periodic sync uses neither a foreground service nor a
+long wake lock and that Tile rendering starts no network activity. These
+physical-device claims cannot be replaced by emulator results.
+
 ## Signing and publication
 
 1. Keep the upload key outside the repository and CI logs. Use Play App Signing
    for distribution. `brooklet.debugSignRelease` is solely a local test path.
-2. Build a signed AAB using a local/CI secret-injection process. Verify it with
+2. Build separately signed phone and Wear AABs using the same release signing
+   identity. The Wear module uses its own version-code sequence. Verify both with
    `apksigner verify --verbose --print-certs` and retain the certificate
    fingerprint in private release records.
 3. Create and verify a signed Git tag, attach checksums and the SBOM to the
@@ -64,7 +76,7 @@ Recommended stages for that workflow are:
    base64-encoded keystore, alias, and passwords as environment secrets, write
    the keystore only to the runner's temporary directory, mask values, and
    delete it in an `always()` cleanup step.
-4. Build the signed AAB, run `bundletool validate`, verify its signature and
+4. Build both signed AABs, run `bundletool validate`, verify their signatures and
    certificate fingerprint, generate SHA-256 checksums and an SBOM, and attest
    the artifacts to the immutable commit.
 5. First upload to a non-production Play track or create a draft GitHub

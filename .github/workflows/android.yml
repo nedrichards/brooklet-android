@@ -23,8 +23,13 @@ jobs:
         run: >-
           ./gradlew --no-daemon
           :core-model:test :core-network:test :core-sync:test
-          :app-phone:testDebugUnitTest lintDebug
-          :app-phone:assembleDebug :app-phone:assembleRelease
+          :app-phone:testDebugUnitTest :app-wear:testDebugUnitTest lintDebug
+          :app-phone:assembleDebug :app-wear:assembleDebug
+          :app-phone:assembleRelease :app-wear:assembleRelease
+      - name: Verify Wear capabilities survive release shrinking
+        run: |
+          unzip -p app/build/outputs/apk/release/app-phone-release.apk resources.arsc | strings | grep -Fq brooklet_phone_provisioning
+          unzip -p app-wear/build/outputs/apk/release/app-wear-release.apk resources.arsc | strings | grep -Fq brooklet_watch_provisioning
       - name: Upload installable debug APK
         id: upload-apk
         if: ${{ success() }}
@@ -32,6 +37,14 @@ jobs:
         with:
           name: brooklet-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: app/build/outputs/apk/debug/app-phone-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload installable Wear debug APK
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brooklet-wear-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: app-wear/build/outputs/apk/debug/app-wear-debug.apk
           if-no-files-found: error
           retention-days: 14
       - name: Link debug APK from the job summary

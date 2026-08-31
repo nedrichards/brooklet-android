@@ -27,5 +27,5 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - run: ./gradlew --no-daemon :app-phone:assembleDebug
+      - run: ./gradlew --no-daemon :app-phone:assembleDebug :app-wear:assembleDebug
       - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9

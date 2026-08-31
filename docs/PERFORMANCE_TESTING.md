@@ -11,10 +11,15 @@ brooklet.debugSignRelease=true
 Build and install it directly with the Android SDK tools:
 
 ```sh
-./gradlew :app-phone:assembleRelease
+./gradlew :app-phone:assembleRelease :app-wear:assembleRelease
 adb install -r app/build/outputs/apk/release/app-phone-release.apk
 adb shell cmd package compile -m speed-profile -f com.nedrichards.brooklet
 ```
+
+Install `app-wear/build/outputs/apk/release/app-wear-release.apk` on the watch.
+The optimized release pair deliberately contains no development credentials,
+so first-time watch setup is approved from the phone. For credential-injected,
+phone-free local setup use matching debug builds instead.
 
 The final command asks ART to compile the packaged profile immediately. Without
 it, a newly installed release can correctly report `status=verify` until the
