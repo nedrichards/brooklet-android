@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.platform.testTag
@@ -362,7 +363,7 @@ class InboxUndoJourneyTest {
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
         compose.onNodeWithContentDescription("Scroll to top").assertDoesNotExist()
-        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown() }
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown(startY = centerY, endY = centerY + 100f) }
 
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed().performClick()
 
@@ -375,7 +376,7 @@ class InboxUndoJourneyTest {
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
         compose.onNodeWithContentDescription("Scroll to top").assertDoesNotExist()
-        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown() }
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown(startY = centerY, endY = centerY + 100f) }
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed()
 
         compose.waitUntil(6_000) {
@@ -388,7 +389,7 @@ class InboxUndoJourneyTest {
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
         compose.onNodeWithContentDescription("Scroll to top").assertDoesNotExist()
-        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown() }
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown(startY = centerY, endY = centerY + 100f) }
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed()
 
         compose.onNodeWithText("Entry 15").performTouchInput { swipeLeft() }
