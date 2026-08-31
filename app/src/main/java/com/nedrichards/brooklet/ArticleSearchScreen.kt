@@ -223,7 +223,7 @@ internal fun ArticleSearchScreen(
             }
             ScrollToTopButton(
                 listState,
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
+                Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
                 enabled = !floatingUiBlocked && results.isNotEmpty(),
             )
         }
