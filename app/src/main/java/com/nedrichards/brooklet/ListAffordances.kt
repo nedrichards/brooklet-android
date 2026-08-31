@@ -79,7 +79,7 @@ internal fun ScrollToTopButton(
         visible = enabled && farFromTop && recentlyScrolledUp,
         enter = fadeIn() + scaleIn(initialScale = .85f),
         exit = fadeOut() + scaleOut(targetScale = .85f),
-        modifier = modifier.padding(top = 16.dp),
+        modifier = modifier.padding(top = 8.dp),
     ) {
         SmallFloatingActionButton(
             onClick = {
