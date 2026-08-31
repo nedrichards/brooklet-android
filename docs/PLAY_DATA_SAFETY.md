@@ -20,7 +20,13 @@ added dependency before submission.
   to subscribe. It is not sent to Brooklet or used for analytics.
 - **Data stored on the device:** Miniflux account details, encrypted
   credentials, cached article content and metadata, reading/star state,
-  reading positions, and queued offline actions.
+  reading positions, and queued offline actions. A configured watch stores its
+  own encrypted Miniflux token, bounded text-only cache, sync cursor, and
+  durable action queue independently from the phone.
+- **Phone-to-watch setup:** After explicit confirmation, the phone sends the
+  Miniflux URL and token in an ephemeral nonce-bound MessageClient message.
+  Brooklet does not use persistent credential DataItems and does not transfer
+  article content through the Wear Data Layer.
 
 ## Likely Play form answers
 
@@ -41,4 +47,5 @@ Use the Play Console's current category names when entering the form:
 For each applicable item, declare that data is encrypted in transit. The app
 does not offer a developer account, does not use data for advertising, and does
 not sell data. The in-app deletion path removes the local account and cached
-data; remote Miniflux/Karakeep deletion remains controlled by those services.
+data on that device; phone and watch have independent disconnect controls.
+Remote Miniflux/Karakeep deletion remains controlled by those services.

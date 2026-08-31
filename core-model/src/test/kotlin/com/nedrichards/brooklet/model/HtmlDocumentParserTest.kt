@@ -64,7 +64,15 @@ class HtmlDocumentParserTest {
         val blocks = HtmlDocumentParser.parse("<ol><li>One</li><li><a href='https://example.com'>Two</a></li></ol><figure><img src='x'><figcaption>A <em>caption</em></figcaption></figure><table><tr><th>Version</th><th>Status</th></tr><tr><td>1</td><td>Ready</td></tr></table>")
 
         assertEquals(DocumentBlock.ListItem("One", ordered = true), blocks[0])
-        assertEquals(DocumentBlock.ListItem("Two", ordered = true, html = "<a href='https://example.com'>Two</a>"), blocks[1])
+        assertEquals(
+            DocumentBlock.ListItem(
+                "Two",
+                ordered = true,
+                html = "<a href='https://example.com'>Two</a>",
+                links = listOf(DocumentLink("Two", "https://example.com")),
+            ),
+            blocks[1],
+        )
         assertEquals(DocumentBlock.Caption("A caption", "A <em>caption</em>"), blocks[3])
         assertEquals(DocumentBlock.Table(listOf(listOf("Version", "Status"), listOf("1", "Ready"))), blocks[4])
     }

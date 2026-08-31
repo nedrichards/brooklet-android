@@ -1,6 +1,6 @@
 # Brooklet privacy policy
 
-Last updated: 22 August 2026
+Last updated: 30 August 2026
 
 Brooklet is an offline-first Miniflux client. Brooklet has no Brooklet-hosted
 backend, advertising, analytics, crash-reporting, recommendation service, or
@@ -26,6 +26,14 @@ reading. Article images are fetched only when needed over HTTPS and are not
 persistently cached by Brooklet. Android backup and device-transfer rules
 exclude Brooklet's local database and preferences.
 
+If the Wear OS application is configured, the phone sends the selected watch a
+one-time, nonce-bound message containing the Miniflux HTTPS address and API
+token only after confirmation in phone Settings. The message is not stored in
+the Wear Data Layer. The watch validates Miniflux, encrypts the credential with
+that watch's Android Keystore, and maintains its own Room cache and durable
+action queue. Article bodies and reading actions are not copied between phone
+and watch.
+
 ## Where information goes
 
 Brooklet sends Miniflux credentials and synchronisation requests only to the
@@ -47,6 +55,12 @@ mutations, Karakeep configuration, and locally stored credentials. This does
 not delete articles, stars, or bookmarks from your Miniflux or Karakeep server;
 those services have their own controls. Uninstalling Brooklet or clearing its
 Android app data also removes its local data.
+
+Phone and watch deletion are per-device. **Disconnect and delete watch data**
+removes the watch credential, cached text, sync state, and queued watch actions
+without deleting phone data or remote Miniflux/Karakeep data. Disconnecting the
+phone does not remotely erase a previously configured watch; disconnect both
+devices when retiring the account.
 
 ## Your choices and responsibilities
 

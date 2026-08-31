@@ -50,6 +50,12 @@ class BrookletDaoTest {
         assertTrue(dao.pendingMutations().isEmpty())
     }
 
+    @Test fun staleStarActionCannotCreateMutationForMissingEntry() = runBlocking {
+        dao.setStarred(accountId = 1, entryId = 404, starred = true, now = 100)
+
+        assertTrue(dao.pendingMutations().isEmpty())
+    }
+
     @Test fun markAllAndUndoRestoreEveryOriginalUnreadEntry() = runBlocking {
         dao.upsertEntries(listOf(
             entry(accountId = 1, id = 11, read = false),
@@ -154,6 +160,34 @@ class BrookletDaoTest {
 
         dao.acknowledgeMutations(1, listOf(11), field = "READ", desiredValue = false)
         assertTrue(dao.pendingMutations().isEmpty())
+    }
+
+    @Test fun removedRemoteEntriesAreDeletedUnlessLocalIntentProtectsThem() = runBlocking {
+        dao.upsertEntries(
+            listOf(
+                entry(accountId = 1, id = 11, read = false),
+                entry(accountId = 1, id = 12, read = false),
+                entry(accountId = 1, id = 13, read = false),
+            ),
+        )
+        dao.setRead(accountId = 1, entryId = 12, read = true, now = 100)
+        dao.queueKarakeep(
+            PendingKarakeepEntity(
+                accountId = 1,
+                entryId = 13,
+                canonicalUrl = "https://example.com/13",
+                title = "Protected",
+                route = "MINIFLUX",
+                state = "QUEUED",
+                createdAt = 100,
+            ),
+        )
+
+        dao.mergeRemotePage(1, emptyList(), listOf(11, 12, 13))
+
+        assertNull(dao.observeEntry(1, 11).first())
+        assertTrue(dao.observeEntry(1, 12).first() != null)
+        assertTrue(dao.observeEntry(1, 13).first() != null)
     }
 
     @Test fun pruningRetainsProtectedEntries() = runBlocking {

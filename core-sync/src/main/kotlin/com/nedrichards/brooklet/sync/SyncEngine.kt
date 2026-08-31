@@ -8,6 +8,7 @@ import com.nedrichards.brooklet.database.SyncCursorEntity
 import com.nedrichards.brooklet.database.SyncStateEntity
 import com.nedrichards.brooklet.database.TokenCipher
 import com.nedrichards.brooklet.model.incrementalStart
+import com.nedrichards.brooklet.model.MinifluxEntryStatus
 import com.nedrichards.brooklet.network.KarakeepClient
 import com.nedrichards.brooklet.network.MinifluxClient
 import java.time.Instant
@@ -55,7 +56,6 @@ class SyncEngine(
             }
             state(account.id, "COMPLETE")
         } catch (cancelled: CancellationException) {
-            state(account.id, "QUEUED")
             throw cancelled
         } catch (error: Throwable) {
             state(account.id, "ERROR", error = error.message?.take(240) ?: error::class.simpleName ?: "Sync failed")
@@ -110,15 +110,21 @@ class SyncEngine(
         state(accountId, "PULLING_ENTRIES")
         do {
             val page = client.entriesChangedAfter(overlap, offset = offset)
-            val mapped = page.entries.map { dto ->
+            val mapped = page.entries.mapNotNull { dto ->
                 val changed = Instant.parse(dto.changedAt).epochSecond
                 newest = maxOf(newest, changed)
+                if (MinifluxEntryStatus.fromWire(dto.status) !in setOf(MinifluxEntryStatus.UNREAD, MinifluxEntryStatus.READ)) {
+                    return@mapNotNull null
+                }
                 EntryEntity(accountId, dto.id, dto.feedId, dto.title, dto.url, dto.author,
                     Instant.parse(dto.publishedAt).toEpochMilli(), changed * 1000, dto.content,
                     "[]", dto.status == "read", dto.starred,
                     dto.readingTime.coerceAtLeast(1), null)
             }
-            dao.mergeRemoteEntries(accountId, mapped)
+            val removed = page.entries.filter {
+                MinifluxEntryStatus.fromWire(it.status) == MinifluxEntryStatus.REMOVED
+            }.map { it.id }
+            dao.mergeRemotePage(accountId, mapped, removed)
             offset += page.entries.size
             state(accountId, "PULLING_ENTRIES", offset, page.total)
         } while (page.entries.isNotEmpty() && offset < page.total)

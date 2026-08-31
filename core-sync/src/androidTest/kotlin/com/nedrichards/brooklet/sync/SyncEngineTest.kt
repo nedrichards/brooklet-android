@@ -19,6 +19,7 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -171,6 +172,39 @@ class SyncEngineTest {
         assertEquals(1, server.requestCount)
         assertEquals("/v1/entries", server.takeRequest().requestUrl?.encodedPath)
         assertEquals("COMPLETE", dao.observeSyncState(1).first()?.phase)
+    }
+
+    @Test fun removedEntryIsDeletedInsteadOfReturningToInboxAsUnread() = runBlocking {
+        val dao = database.dao()
+        val encrypted = cipher.encrypt("test-token")
+        dao.upsertAccount(
+            AccountEntity(
+                serverUrl = server.url("/").toString(),
+                username = "nick",
+                tokenCiphertext = encrypted.ciphertext,
+                tokenIv = encrypted.iv,
+                serverVersion = "2.3.2",
+                createdAt = 0,
+            ),
+        )
+        dao.upsertEntries(listOf(entry(read = false)))
+        server.enqueue(jsonResponse("[]"))
+        server.enqueue(jsonResponse("[]"))
+        server.enqueue(
+            jsonResponse(
+                """{"total":1,"entries":[${remoteEntryJson().replace("\"status\":\"read\"", "\"status\":\"removed\"")}]}""",
+            ),
+        )
+
+        SyncEngine(
+            dao = dao,
+            cipher = cipher,
+            clock = { 999 },
+            minifluxClient = { url, token -> MinifluxClient(url, token, allowInsecureForTests = true) },
+        ).run()
+
+        assertNull(dao.observeEntry(1, 7).first())
+        assertTrue(dao.observeInbox(1).first().isEmpty())
     }
 
     private fun entry(read: Boolean) = EntryEntity(

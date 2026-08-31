@@ -1,6 +1,7 @@
 package com.nedrichards.brooklet.network
 
 import com.nedrichards.brooklet.model.FailureKind
+import com.nedrichards.brooklet.model.MinifluxEntryQuery
 import com.nedrichards.brooklet.model.RetryClassifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -38,7 +39,22 @@ class MinifluxClient(
     suspend fun categories(): List<CategoryDto> = get("v1/categories")
     suspend fun feeds(): List<FeedDto> = get("v1/feeds")
     suspend fun entriesChangedAfter(epochSeconds: Long, limit: Int = 100, offset: Int = 0): EntriesDto =
-        get("v1/entries?changed_after=$epochSeconds&direction=desc&order=changed_at&limit=$limit&offset=$offset")
+        entries(MinifluxEntryQuery(changedAfterEpochSeconds = epochSeconds, limit = limit, offset = offset))
+    suspend fun entries(query: MinifluxEntryQuery): EntriesDto {
+        val requestUrl = base.newBuilder().addPathSegments("v1/entries").apply {
+            query.status?.let { addQueryParameter("status", it.wireValue) }
+            query.changedAfterEpochSeconds?.let { addQueryParameter("changed_after", it.toString()) }
+            addQueryParameter("direction", query.direction)
+            addQueryParameter("order", query.order)
+            addQueryParameter("limit", query.limit.toString())
+            addQueryParameter("offset", query.offset.toString())
+        }.build()
+        return get(requestUrl)
+    }
+    suspend fun entry(entryId: Long): EntryDto {
+        require(entryId > 0) { "Entry id must be positive" }
+        return get("v1/entries/$entryId")
+    }
     suspend fun setRead(entryIds: List<Long>, read: Boolean) = put("v1/entries", StatusMutationDto(entryIds, if (read) "read" else "unread"))
     suspend fun setStarred(entryIds: List<Long>, starred: Boolean) = put("v1/entries", StarMutationDto(entryIds, starred))
     suspend fun saveToIntegration(entryId: Long) = postEmpty("v1/entries/$entryId/save")
@@ -47,6 +63,8 @@ class MinifluxClient(
     suspend fun deleteFeed(feedId: Long) = request<Unit>(Request.Builder().url(url("v1/feeds/$feedId")).delete().authenticated().build())
 
     private suspend inline fun <reified T> get(path: String): T = request(Request.Builder().url(url(path)).get().authenticated().build())
+    private suspend inline fun <reified T> get(requestUrl: okhttp3.HttpUrl): T =
+        request(Request.Builder().url(requestUrl).get().authenticated().build())
     private suspend inline fun <reified T> put(path: String, value: T) {
         val body = if (value is Unit) ByteArray(0).toRequestBody(JSON) else json.encodeToString(value).toRequestBody(JSON)
         request<Unit>(Request.Builder().url(url(path)).put(body).authenticated().build())

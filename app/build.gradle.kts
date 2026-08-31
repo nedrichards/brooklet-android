@@ -94,6 +94,8 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.work.runtime)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.play.services.wearable)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.junit)

@@ -73,6 +73,7 @@ fun SettingsScreen(
     val apiKeyFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    val pendingWear by application.wearProvisioning.pending.collectAsStateWithLifecycle()
     val syncStatus = syncSummary(syncActivity, sync?.phase, sync?.processed ?: 0, sync?.total ?: 0, sync?.error)
     val accountStatus = when {
         syncActivity.state != SyncActivityState.IDLE || sync?.phase == "ERROR" -> syncStatus
@@ -191,10 +192,36 @@ fun SettingsScreen(
                         ))
                         dao.upsertStoragePolicy(StoragePolicyEntity(accountId, retention))
                         apiKey = ""
-                        onMessage("Settings saved")
+                        onMessage("Karakeep and storage settings saved")
                     }
                 },
-            ) { Text("Save settings") }
+            ) { Text("Save Karakeep and storage settings") }
+
+            BrookletSection(
+                title = "Set up a watch",
+                supportingText = "Watch setup is separate from the settings above. Brooklet sends your Miniflux credentials only after you approve a request.",
+            ) {
+                if (pendingWear.isEmpty()) {
+                    Text(
+                        "Open Brooklet on your paired watch. It will contact this phone automatically, then appear here for approval.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    pendingWear.forEach { watch ->
+                        Text(watch.displayName, style = MaterialTheme.typography.titleSmall)
+                        Text(watch.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (watch.status == "Waiting for confirmation") {
+                            FilledTonalButton(onClick = {
+                                scope.launch {
+                                    runCatching { application.wearProvisioning.provision(watch.nodeId) }
+                                        .onFailure { onMessage(it.message ?: "Watch setup failed") }
+                                }
+                            }) { Text("Approve and replace watch setup") }
+                        }
+                    }
+                }
+            }
 
             BrookletSection("Diagnostics") {
                 Text("Database available", style = MaterialTheme.typography.bodyMedium)

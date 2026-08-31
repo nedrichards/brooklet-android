@@ -8,6 +8,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.nedrichards.brooklet.model.MinifluxEntryQuery
+import com.nedrichards.brooklet.model.MinifluxEntryStatus
 
 class MinifluxClientTest {
     private lateinit var server: MockWebServer
@@ -41,6 +43,19 @@ class MinifluxClientTest {
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/v1/entries/42/save", request.path)
+    }
+
+    @Test fun `filtered entries and individual entry use Miniflux contracts`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"total":0,"entries":[]}""").setHeader("Content-Type", "application/json"))
+        server.enqueue(MockResponse().setBody("""{"id":42,"feed_id":7,"title":"Article","url":"https://example.com/a","published_at":"2026-08-30T08:00:00Z","changed_at":"2026-08-30T08:01:00Z","status":"unread","starred":false}""").setHeader("Content-Type", "application/json"))
+
+        client().entries(MinifluxEntryQuery(status = MinifluxEntryStatus.UNREAD, order = "published_at", limit = 100))
+        assertEquals(
+            "/v1/entries?status=unread&direction=desc&order=published_at&limit=100&offset=0",
+            server.takeRequest().path,
+        )
+        assertEquals(42L, client().entry(42).id)
+        assertEquals("/v1/entries/42", server.takeRequest().path)
     }
 
     @Test fun `subscription creates a feed from the shared URL`() = runBlocking {

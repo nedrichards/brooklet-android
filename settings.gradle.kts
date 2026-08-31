@@ -32,12 +32,14 @@ plugins {
 rootProject.name = "Brooklet"
 include(
     ":app-phone",
+    ":app-wear",
     ":core-model",
     ":core-database",
     ":core-network",
     ":core-sync",
     ":core-designsystem",
     ":core-testing",
+    ":core-wear-data",
     ":baseline-profile",
 )
 

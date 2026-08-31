@@ -135,7 +135,7 @@ abstract class BrookletDao {
     @Query("UPDATE entries SET read = :read, lastOpenedAt = CASE WHEN :read THEN :now ELSE lastOpenedAt END WHERE accountId = :accountId AND id = :entryId")
     protected abstract suspend fun updateRead(accountId: Long, entryId: Long, read: Boolean, now: Long): Int
     @Query("UPDATE entries SET starred = :starred WHERE accountId = :accountId AND id = :entryId")
-    protected abstract suspend fun updateStar(accountId: Long, entryId: Long, starred: Boolean)
+    protected abstract suspend fun updateStar(accountId: Long, entryId: Long, starred: Boolean): Int
     @Query("SELECT id FROM entries WHERE accountId = :accountId AND id IN (:entryIds)")
     protected abstract suspend fun existingEntryIds(accountId: Long, entryIds: List<Long>): List<Long>
     @Query("UPDATE entries SET read = :read, lastOpenedAt = CASE WHEN :read THEN :now ELSE lastOpenedAt END WHERE accountId = :accountId AND id IN (:entryIds)")
@@ -150,8 +150,9 @@ abstract class BrookletDao {
 
     @Transaction
     open suspend fun setStarred(accountId: Long, entryId: Long, starred: Boolean, now: Long) {
-        updateStar(accountId, entryId, starred)
-        upsertMutation(PendingMutationEntity(accountId, entryId, "STARRED", starred, now))
+        if (updateStar(accountId, entryId, starred) == 1) {
+            upsertMutation(PendingMutationEntity(accountId, entryId, "STARRED", starred, now))
+        }
     }
 
     @Transaction
@@ -188,6 +189,26 @@ abstract class BrookletDao {
                 lastOpenedAt = existing?.lastOpenedAt,
             )
         })
+    }
+
+    @Query("""
+        DELETE FROM entries
+        WHERE accountId = :accountId AND id IN (:entryIds)
+          AND NOT EXISTS (
+              SELECT 1 FROM pending_mutations m
+              WHERE m.accountId = entries.accountId AND m.entryId = entries.id
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM pending_karakeep k
+              WHERE k.accountId = entries.accountId AND k.entryId = entries.id AND k.state != 'SAVED'
+          )
+    """)
+    protected abstract suspend fun deleteUnprotectedRemovedEntries(accountId: Long, entryIds: List<Long>): Int
+
+    @Transaction
+    open suspend fun mergeRemotePage(accountId: Long, remote: List<EntryEntity>, removedEntryIds: List<Long>) {
+        if (removedEntryIds.isNotEmpty()) deleteUnprotectedRemovedEntries(accountId, removedEntryIds)
+        mergeRemoteEntries(accountId, remote)
     }
 
     @Query("DELETE FROM pending_mutations WHERE accountId = :accountId AND entryId IN (:entryIds) AND field = :field AND desiredValue = :desiredValue")

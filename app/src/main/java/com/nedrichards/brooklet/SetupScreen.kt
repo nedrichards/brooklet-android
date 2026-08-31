@@ -81,6 +81,7 @@ fun SetupScreen(application: BrookletApplication) {
                         tokenCiphertext = encrypted.ciphertext, tokenIv = encrypted.iv,
                         serverVersion = identity.version.version, createdAt = System.currentTimeMillis(),
                     ))
+                    application.scheduler.ensurePeriodic()
                     application.scheduler.enqueueForegroundSync()
                 }.onFailure { error = it.message ?: "Could not connect to Miniflux" }
                 working = false

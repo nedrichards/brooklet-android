@@ -17,6 +17,7 @@ class BrookletApplication : Application() {
     val database by lazy { BrookletDatabase.getInstance(this) }
     val scheduler by lazy { WorkManagerSyncScheduler(this) }
     val repository by lazy { EntryRepository(database.dao(), scheduler) }
+    val wearProvisioning by lazy { WearProvisioningController(this) }
 
     fun saveReaderPosition(accountId: Long, entryId: Long, block: Int, offset: Int) {
         applicationScope.launch {
@@ -33,6 +34,11 @@ class BrookletApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        scheduler.ensurePeriodic()
+        applicationScope.launch {
+            if (database.dao().account() != null) scheduler.ensurePeriodic()
+        }
+        // Advertise phone provisioning as soon as Brooklet starts, rather
+        // than waiting until the user opens Settings.
+        wearProvisioning
     }
 }

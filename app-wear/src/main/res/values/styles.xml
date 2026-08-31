@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Brooklet.Wear" parent="android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#78D6B3</item>
+    </style>
+</resources>

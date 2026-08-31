@@ -21,12 +21,12 @@ object HtmlDocumentParser {
             val tag = match.groups[1]!!.value.lowercase()
             val content = match.groups[2]?.value.orEmpty()
             val block = when {
-                tag.startsWith("h") -> DocumentBlock.Heading(tag.drop(1).toInt(), text(content), richHtml(content))
-                tag == "p" -> DocumentBlock.Paragraph(text(content), richHtml(content))
-                tag == "blockquote" -> DocumentBlock.Quote(text(content), richHtml(content))
+                tag.startsWith("h") -> DocumentBlock.Heading(tag.drop(1).toInt(), text(content), richHtml(content), links(content))
+                tag == "p" -> DocumentBlock.Paragraph(text(content), richHtml(content), links(content))
+                tag == "blockquote" -> DocumentBlock.Quote(text(content), richHtml(content), links(content))
                 tag == "pre" -> DocumentBlock.Code(decode(tags.replace(content, "")))
-                tag == "li" -> DocumentBlock.ListItem(text(content), ordered = isInsideOrderedList(html, match.range.first), html = richHtml(content))
-                tag == "figcaption" -> DocumentBlock.Caption(text(content), richHtml(content))
+                tag == "li" -> DocumentBlock.ListItem(text(content), ordered = isInsideOrderedList(html, match.range.first), html = richHtml(content), links = links(content))
+                tag == "figcaption" -> DocumentBlock.Caption(text(content), richHtml(content), links(content))
                 tag == "table" -> table(content)
                 else -> null
             }
@@ -64,6 +64,14 @@ object HtmlDocumentParser {
     private fun attribute(tag: String, name: String) = Regex("\\b$name\\s*=\\s*(['\"])(.*?)\\1", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(2)?.let(::decode)
     private fun text(value: String) = decode(tags.replace(value, " ")).replace(spaces, " ").trim()
     private fun richHtml(value: String) = value.takeIf { Regex("</?(a|strong|b|em|i|code|br)(?:\\s|>|/)", RegexOption.IGNORE_CASE).containsMatchIn(it) }
+    private fun links(value: String): List<DocumentLink> = Regex(
+        "<a(?:\\s[^>]*)?href\\s*=\\s*(['\"])(.*?)\\1[^>]*>(.*?)</a>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    ).findAll(value).mapNotNull { match ->
+        val url = decode(match.groups[2]?.value.orEmpty()).trim()
+        val label = text(match.groups[3]?.value.orEmpty()).ifBlank { url }
+        url.takeIf { it.isNotEmpty() }?.let { DocumentLink(label, it) }
+    }.toList()
 
     private fun mask(value: String, ranges: List<IntRange>): String {
         val masked = value.toCharArray()
