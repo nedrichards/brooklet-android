@@ -129,7 +129,7 @@ fun LibraryScreen(
             }
             ScrollToTopButton(
                 activeListState,
-                Modifier.align(Alignment.BottomCenter),
+                Modifier.align(Alignment.TopCenter),
                 enabled = !floatingUiBlocked,
             )
         }

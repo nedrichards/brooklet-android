@@ -361,6 +361,8 @@ class InboxUndoJourneyTest {
         seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithContentDescription("Scroll to top").assertDoesNotExist()
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown() }
 
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed().performClick()
 
@@ -372,6 +374,8 @@ class InboxUndoJourneyTest {
         seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithContentDescription("Scroll to top").assertDoesNotExist()
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown() }
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed()
 
         compose.waitUntil(6_000) {
@@ -383,6 +387,8 @@ class InboxUndoJourneyTest {
         seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithContentDescription("Scroll to top").assertDoesNotExist()
+        compose.onNodeWithTag("entry-list").performTouchInput { swipeDown() }
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed()
 
         compose.onNodeWithText("Entry 15").performTouchInput { swipeLeft() }

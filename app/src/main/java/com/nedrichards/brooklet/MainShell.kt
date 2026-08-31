@@ -755,7 +755,7 @@ internal fun EntryList(
             listState = listState,
             enabled = queuedNewEntries == 0L && !floatingUiBlocked,
             onClick = onScrollToTop,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            modifier = Modifier.align(Alignment.TopCenter),
         )
     }
 }
@@ -810,7 +810,7 @@ private fun SavedList(
             }
             ScrollToTopButton(
                 listState,
-                Modifier.align(Alignment.BottomCenter),
+                Modifier.align(Alignment.TopCenter),
                 enabled = !floatingUiBlocked,
             )
         }

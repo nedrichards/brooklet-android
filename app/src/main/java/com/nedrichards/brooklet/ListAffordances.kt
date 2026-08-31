@@ -39,33 +39,47 @@ internal fun ScrollToTopButton(
     val farFromTop by remember(listState) {
         derivedStateOf { listState.firstVisibleItemIndex > 2 }
     }
-    var recentlyScrolled by remember(listState) { mutableStateOf(false) }
+    var recentlyScrolledUp by remember(listState) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(listState, enabled, farFromTop) {
         if (!enabled || !farFromTop) {
-            recentlyScrolled = false
+            recentlyScrolledUp = false
             return@LaunchedEffect
         }
-        snapshotFlow { listState.isScrollInProgress to listState.firstVisibleItemIndex }
-            .collectLatest { (isScrolling, index) ->
-                if (index <= 2) {
-                    recentlyScrolled = false
-                } else {
-                    recentlyScrolled = true
-                    if (!isScrolling) {
-                        delay(ScrollToTopVisibleMillis)
-                        recentlyScrolled = false
-                    }
+        var previousIndex = listState.firstVisibleItemIndex
+        var previousOffset = listState.firstVisibleItemScrollOffset
+        snapshotFlow {
+            Triple(
+                listState.isScrollInProgress,
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+            )
+        }.collectLatest { (isScrolling, index, offset) ->
+            if (index <= 2) {
+                recentlyScrolledUp = false
+            } else {
+                val movedUp = index < previousIndex || index == previousIndex && offset < previousOffset
+                val movedDown = index > previousIndex || index == previousIndex && offset > previousOffset
+                when {
+                    movedUp -> recentlyScrolledUp = true
+                    movedDown -> recentlyScrolledUp = false
+                }
+                previousIndex = index
+                previousOffset = offset
+                if (!isScrolling && recentlyScrolledUp) {
+                    delay(ScrollToTopVisibleMillis)
+                    recentlyScrolledUp = false
                 }
             }
+        }
     }
 
     AnimatedVisibility(
-        visible = enabled && farFromTop && recentlyScrolled,
+        visible = enabled && farFromTop && recentlyScrolledUp,
         enter = fadeIn() + scaleIn(initialScale = .85f),
         exit = fadeOut() + scaleOut(targetScale = .85f),
-        modifier = modifier.padding(bottom = 16.dp),
+        modifier = modifier.padding(top = 16.dp),
     ) {
         SmallFloatingActionButton(
             onClick = {
