@@ -139,15 +139,20 @@ internal class InboxObservationTracker(
     private val recentRemovalLimit: Int = 256,
 ) {
     private var currentIds: Set<Long>? = null
+    private var hasObservedPopulatedInbox = false
     private val recentRemovals = LinkedHashSet<Long>()
 
-    fun observe(newIds: List<Long>, restoredIds: Set<Long> = emptySet()): Int {
+    fun observe(
+        newIds: List<Long>,
+        restoredIds: Set<Long> = emptySet(),
+        reportNewEntries: Boolean = true,
+    ): Int {
         val previous = currentIds
-        val newCount = previous?.let { knownCurrent ->
+        val newCount = if (reportNewEntries && hasObservedPopulatedInbox) previous?.let { knownCurrent ->
             newIds.takeWhile { id ->
                 id !in knownCurrent && id !in recentRemovals && id !in restoredIds
             }.size
-        } ?: 0
+        } ?: 0 else 0
         val newSet = newIds.toSet()
         previous?.forEach { id -> if (id !in newSet) recentRemovals += id }
         recentRemovals.removeAll(newSet)
@@ -155,6 +160,7 @@ internal class InboxObservationTracker(
             recentRemovals.remove(recentRemovals.first())
         }
         currentIds = newSet
+        if (newSet.isNotEmpty()) hasObservedPopulatedInbox = true
         return newCount
     }
 
@@ -163,7 +169,11 @@ internal class InboxObservationTracker(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainShell(application: BrookletApplication, accountId: Long) {
+fun MainShell(
+    application: BrookletApplication,
+    accountId: Long,
+    suppressNewEntryNotifications: Boolean = false,
+) {
     val undoFactory = remember(accountId, application.repository) {
         viewModelFactory {
             initializer {
@@ -185,6 +195,7 @@ fun MainShell(application: BrookletApplication, accountId: Long) {
         repository = application.repository,
         scheduler = application.scheduler,
         undoViewModel = undoViewModel,
+        suppressNewEntryNotifications = suppressNewEntryNotifications,
     )
 }
 
@@ -196,6 +207,7 @@ internal fun MainShellContent(
     repository: EntryRepository,
     scheduler: SyncScheduler,
     undoViewModel: InboxUndoViewModel,
+    suppressNewEntryNotifications: Boolean = false,
 ) {
     var destination by rememberSaveable { mutableStateOf(Destination.INBOX) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
@@ -531,6 +543,7 @@ internal fun MainShellContent(
                             onScrollToTop = jumpInboxToTop,
                             floatingUiBlocked = floatingUiBlocked,
                             restoredEntryIds = undoUiState.restoredEntryIds,
+                            reportNewEntries = !suppressNewEntryNotifications,
                         ) { open(it, inbox) }
                         Destination.SAVED -> SavedList(
                             entries = saved,
@@ -591,6 +604,7 @@ internal fun EntryList(
     onScrollToTop: (() -> Unit)? = null,
     floatingUiBlocked: Boolean = false,
     restoredEntryIds: Set<Long> = emptySet(),
+    reportNewEntries: Boolean = true,
     onOpen: (Entry) -> Unit,
 ) {
     val observationTracker = remember { InboxObservationTracker() }
@@ -639,7 +653,11 @@ internal fun EntryList(
 
     androidx.compose.runtime.LaunchedEffect(entries, restoredEntryIds) {
         val currentIds = entries.map { it.id }
-        detectedNewEntries += observationTracker.observe(currentIds, restoredEntryIds)
+        detectedNewEntries += observationTracker.observe(
+            newIds = currentIds,
+            restoredIds = restoredEntryIds,
+            reportNewEntries = reportNewEntries,
+        )
     }
     androidx.compose.runtime.LaunchedEffect(detectedNewEntries) {
         if (detectedNewEntries == 0L) return@LaunchedEffect

@@ -79,6 +79,7 @@ private fun InitialSyncGate(application: BrookletApplication, accountId: Long) {
     val sync by syncFlow.collectAsStateWithLifecycle(initialValue = null)
     val entryCount by entryCountFlow.collectAsStateWithLifecycle(initialValue = 0)
     val syncActivity by application.scheduler.activity.collectAsStateWithLifecycle(initialValue = SyncActivity())
+    val sessionStartedAt = remember(accountId) { System.currentTimeMillis() }
     var syncStopped by rememberSaveable(accountId) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LifecycleStartEffect(accountId) {
@@ -93,7 +94,13 @@ private fun InitialSyncGate(application: BrookletApplication, accountId: Long) {
     // Each fetched page is committed independently. Let the user start reading as
     // soon as the first page lands while the rest of the cache fills in behind it.
     if (cursor != null || entryCount > 0) {
-        MainShell(application, accountId)
+        MainShell(
+            application = application,
+            accountId = accountId,
+            suppressNewEntryNotifications = cursor?.lastSuccessfulSyncAt
+                ?.let { it < sessionStartedAt - FOREGROUND_SYNC_MAX_AGE_MS }
+                ?: true,
+        )
     } else {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {

@@ -15,6 +15,14 @@ class InboxNewArticleDetectionTest {
         )
     }
 
+    @Test fun emptyComposePlaceholderDoesNotTurnInitialDatabaseHydrationIntoNewArticles() {
+        val tracker = InboxObservationTracker()
+
+        assertEquals(0, tracker.observe(emptyList()))
+        assertEquals(0, tracker.observe(listOf(3L, 2L, 1L)))
+        assertEquals(1, tracker.observe(listOf(4L, 3L, 2L, 1L)))
+    }
+
     @Test fun anObservedEntryRestoredByUndoIsNotReportedAsNew() {
         assertEquals(
             0,
@@ -56,5 +64,17 @@ class InboxNewArticleDetectionTest {
         tracker.observe(listOf(3L, 2L, 1L))
 
         assertEquals(2, tracker.observe(listOf(5L, 4L, 3L, 2L, 1L)))
+    }
+
+    @Test fun startupCatchUpUpdatesBaselineWithoutReportingTheCacheAsNew() {
+        val tracker = InboxObservationTracker()
+
+        assertEquals(0, tracker.observe(emptyList(), reportNewEntries = false))
+        assertEquals(0, tracker.observe(listOf(3L, 2L, 1L), reportNewEntries = false))
+        assertEquals(
+            0,
+            tracker.observe((144L downTo 1L).toList(), reportNewEntries = false),
+        )
+        assertEquals(1, tracker.observe((145L downTo 1L).toList()))
     }
 }
