@@ -49,6 +49,12 @@ import com.nedrichards.brooklet.designsystem.BrookletSpacing
 import com.nedrichards.brooklet.designsystem.BrookletWidths
 import com.nedrichards.brooklet.sync.SyncActivity
 import com.nedrichards.brooklet.sync.SyncActivityState
+import com.nedrichards.brooklet.sync.WorkManagerSyncScheduler
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 @Composable
@@ -61,9 +67,16 @@ fun SettingsScreen(
     val dao = application.database.dao()
     val accountFlow = remember(dao) { dao.observeAccount() }
     val syncFlow = remember(accountId, dao) { dao.observeSyncState(accountId) }
+    val cursorFlow = remember(accountId, dao) { dao.observeCursor(accountId) }
+    val pendingReadFlow = remember(accountId, dao) { dao.observePendingReadMutationCount(accountId) }
+    val pendingStarFlow = remember(accountId, dao) { dao.observePendingStarMutationCount(accountId) }
+    val pendingKarakeepFlow = remember(accountId, dao) { dao.observePendingKarakeepCount(accountId) }
     val account by accountFlow.collectAsStateWithLifecycle(initialValue = null)
-    val pending by application.repository.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
     val sync by syncFlow.collectAsStateWithLifecycle(initialValue = null)
+    val cursor by cursorFlow.collectAsStateWithLifecycle(initialValue = null)
+    val pendingRead by pendingReadFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val pendingStar by pendingStarFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val pendingKarakeep by pendingKarakeepFlow.collectAsStateWithLifecycle(initialValue = 0)
     val syncActivity by application.scheduler.activity.collectAsStateWithLifecycle(initialValue = SyncActivity())
     var route by remember { mutableStateOf("MINIFLUX") }
     var endpoint by remember { mutableStateOf("") }
@@ -75,9 +88,10 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val pendingWear by application.wearProvisioning.pending.collectAsStateWithLifecycle()
     val syncStatus = syncSummary(syncActivity, sync?.phase, sync?.processed ?: 0, sync?.total ?: 0, sync?.error)
+    val pendingActions = pendingRead + pendingStar + pendingKarakeep
     val accountStatus = when {
         syncActivity.state != SyncActivityState.IDLE || sync?.phase == "ERROR" -> syncStatus
-        pending > 0 -> "$pending reading ${if (pending == 1) "action" else "actions"} queued"
+        pendingActions > 0 -> "$pendingActions ${if (pendingActions == 1) "action" else "actions"} awaiting delivery"
         else -> null
     }
 
@@ -225,8 +239,24 @@ fun SettingsScreen(
 
             BrookletSection("Diagnostics") {
                 Text("Database available", style = MaterialTheme.typography.bodyMedium)
-                Text("Sync · $syncStatus", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Reading action queue · $pending", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Remote data refreshed · ${diagnosticTimestamp(cursor?.lastSuccessfulSyncAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Sync worker · $syncStatus${diagnosticTimestamp(sync?.updatedAt, prefix = " · ")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Pending read/unread actions · $pendingRead", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Pending save/unsave actions · $pendingStar", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Pending Karakeep deliveries · $pendingKarakeep", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Actions normally leave these queues after the ${WorkManagerSyncScheduler.ACTION_DEBOUNCE_SECONDS}-second debounce and server acknowledgement.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text("Token and article-body logging disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -252,7 +282,7 @@ fun SettingsScreen(
     }
 }
 
-private fun syncSummary(
+internal fun syncSummary(
     activity: SyncActivity,
     phase: String?,
     processed: Int,
@@ -274,11 +304,23 @@ private fun syncSummary(
     SyncActivityState.QUEUED -> "Waiting for a network connection"
     SyncActivityState.RETRYING -> "Waiting to retry${error?.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}"
     SyncActivityState.IDLE -> when (phase) {
-        "COMPLETE" -> "Up to date"
+        "COMPLETE" -> "Completed"
         "ERROR" -> "Last sync failed${error?.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}"
         null, "QUEUED" -> "Sync idle"
         else -> "Sync paused"
     }
+}
+
+internal fun diagnosticTimestamp(
+    epochMillis: Long?,
+    prefix: String = "",
+    zoneId: ZoneId = ZoneId.systemDefault(),
+    locale: Locale = Locale.getDefault(),
+): String {
+    if (epochMillis == null) return if (prefix.isEmpty()) "Never" else ""
+    val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+        .withLocale(locale)
+    return prefix + formatter.format(Instant.ofEpochMilli(epochMillis).atZone(zoneId))
 }
 
 @Composable

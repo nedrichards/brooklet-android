@@ -129,7 +129,12 @@ abstract class BrookletDao {
     @Query("SELECT * FROM sync_state WHERE accountId = :accountId") abstract fun observeSyncState(accountId: Long): Flow<SyncStateEntity?>
     @Query("SELECT COUNT(*) FROM entries WHERE accountId = :accountId") abstract fun observeEntryCount(accountId: Long): Flow<Int>
     @Query("SELECT * FROM reader_positions WHERE accountId = :accountId AND entryId = :entryId") abstract fun observePosition(accountId: Long, entryId: Long): Flow<ReaderPositionEntity?>
-    @Query("SELECT COUNT(*) FROM pending_mutations") abstract fun observePendingMutationCount(): Flow<Int>
+    @Query("SELECT COUNT(*) FROM pending_mutations WHERE accountId = :accountId AND field = 'READ'")
+    abstract fun observePendingReadMutationCount(accountId: Long): Flow<Int>
+    @Query("SELECT COUNT(*) FROM pending_mutations WHERE accountId = :accountId AND field = 'STARRED'")
+    abstract fun observePendingStarMutationCount(accountId: Long): Flow<Int>
+    @Query("SELECT COUNT(*) FROM pending_karakeep WHERE accountId = :accountId AND state != 'SAVED'")
+    abstract fun observePendingKarakeepCount(accountId: Long): Flow<Int>
     @Query("SELECT id FROM entries WHERE accountId = :accountId AND read = 0 ORDER BY publishedAt DESC") abstract suspend fun unreadIds(accountId: Long): List<Long>
 
     @Query("UPDATE entries SET read = :read, lastOpenedAt = CASE WHEN :read THEN :now ELSE lastOpenedAt END WHERE accountId = :accountId AND id = :entryId")

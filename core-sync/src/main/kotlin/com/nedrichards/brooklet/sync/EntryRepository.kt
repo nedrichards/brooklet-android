@@ -29,7 +29,6 @@ class EntryRepository(
     fun inbox(accountId: Long): Flow<List<Entry>> = dao.observeInbox(accountId).map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
     fun saved(accountId: Long): Flow<List<Entry>> = dao.observeSaved(accountId).map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
     fun allEntries(accountId: Long): Flow<List<Entry>> = dao.observeAllEntries(accountId).map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
-    val pendingCount: Flow<Int> = dao.observePendingMutationCount()
     fun categories(accountId: Long): Flow<List<Category>> = dao.observeCategories(accountId).map { values -> values.map { Category(it.id, it.title) } }.flowOn(Dispatchers.Default)
     fun feeds(accountId: Long): Flow<List<Feed>> = dao.observeFeeds(accountId).map { values -> values.map { Feed(it.id, it.categoryId, it.title, it.siteUrl, it.feedUrl) } }.flowOn(Dispatchers.Default)
     fun entry(accountId: Long, entryId: Long): Flow<Entry?> = dao.observeEntry(accountId, entryId)

@@ -56,6 +56,21 @@ class BrookletDaoTest {
         assertTrue(dao.pendingMutations().isEmpty())
     }
 
+    @Test fun diagnosticsSeparatePendingActionQueuesByAccountAndPurpose() = runBlocking {
+        dao.upsertEntries(listOf(
+            entry(accountId = 1, id = 11, read = false),
+            entry(accountId = 1, id = 12, read = false),
+            entry(accountId = 2, id = 21, read = false),
+        ))
+        dao.setRead(accountId = 1, entryId = 11, read = true, now = 100)
+        dao.setStarred(accountId = 1, entryId = 12, starred = true, now = 100)
+        dao.setRead(accountId = 2, entryId = 21, read = true, now = 100)
+
+        assertEquals(1, dao.observePendingReadMutationCount(1).first())
+        assertEquals(1, dao.observePendingStarMutationCount(1).first())
+        assertEquals(0, dao.observePendingKarakeepCount(1).first())
+    }
+
     @Test fun markAllAndUndoRestoreEveryOriginalUnreadEntry() = runBlocking {
         dao.upsertEntries(listOf(
             entry(accountId = 1, id = 11, read = false),
