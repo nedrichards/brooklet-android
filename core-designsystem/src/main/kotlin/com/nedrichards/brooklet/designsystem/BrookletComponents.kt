@@ -11,17 +11,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
 object BrookletSpacing {
@@ -83,15 +88,40 @@ fun BrookletSnackbarHost(
     modifier: Modifier = Modifier,
 ) {
     SnackbarHost(hostState = hostState, modifier = modifier) { data ->
-        Snackbar(
-            snackbarData = data,
-            modifier = Modifier.padding(horizontal = 16.dp),
+        Surface(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                .widthIn(max = 600.dp)
+                .fillMaxWidth()
+                .testTag("brooklet-snackbar"),
             shape = BrookletShapes.floating,
-            containerColor = MaterialTheme.colorScheme.inverseSurface,
+            color = MaterialTheme.colorScheme.inverseSurface,
             contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-            actionColor = MaterialTheme.colorScheme.inversePrimary,
-            dismissActionContentColor = MaterialTheme.colorScheme.inverseOnSurface,
-        )
+            shadowElevation = 6.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = data.visuals.message,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                data.visuals.actionLabel?.let { label ->
+                    TextButton(
+                        onClick = data::performAction,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.inversePrimary,
+                        ),
+                    ) { Text(label) }
+                }
+                if (data.visuals.withDismissAction) {
+                    IconButton(onClick = data::dismiss) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Dismiss")
+                    }
+                }
+            }
+        }
     }
 }
 
