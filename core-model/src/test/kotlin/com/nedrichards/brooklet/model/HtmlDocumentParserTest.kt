@@ -31,6 +31,14 @@ class HtmlDocumentParserTest {
         assertEquals(DocumentBlock.Image("https://example.com/lazy.jpg", "Lazy"), blocks.single())
     }
 
+    @Test fun `accepts common unquoted attributes and apostrophe entities`() {
+        val blocks = HtmlDocumentParser.parse("<p><a href=https://example.com/story>Today&apos;s story</a></p><img src=https://example.com/photo.jpg alt=Photo>")
+
+        assertEquals("Today's story", (blocks[0] as DocumentBlock.Paragraph).text)
+        assertEquals(listOf(DocumentLink("Today's story", "https://example.com/story")), (blocks[0] as DocumentBlock.Paragraph).links)
+        assertEquals(DocumentBlock.Image("https://example.com/photo.jpg", "Photo"), blocks[1])
+    }
+
     @Test fun `keeps unwrapped feed text alongside an image`() {
         val blocks = HtmlDocumentParser.parse("<a href=\"https://example.com/article\"><img src=\"https://example.com/article.jpg\"></a><br>Wine 11.16 is out with VA-API decoding and better ARM64 support.")
 
@@ -63,17 +71,30 @@ class HtmlDocumentParserTest {
     @Test fun `keeps inline markup plus ordered lists captions and tables`() {
         val blocks = HtmlDocumentParser.parse("<ol><li>One</li><li><a href='https://example.com'>Two</a></li></ol><figure><img src='x'><figcaption>A <em>caption</em></figcaption></figure><table><tr><th>Version</th><th>Status</th></tr><tr><td>1</td><td>Ready</td></tr></table>")
 
-        assertEquals(DocumentBlock.ListItem("One", ordered = true), blocks[0])
+        assertEquals(DocumentBlock.ListItem("One", ordered = true, ordinal = 1), blocks[0])
         assertEquals(
             DocumentBlock.ListItem(
                 "Two",
                 ordered = true,
                 html = "<a href='https://example.com'>Two</a>",
                 links = listOf(DocumentLink("Two", "https://example.com")),
+                ordinal = 2,
             ),
             blocks[1],
         )
         assertEquals(DocumentBlock.Caption("A caption", "A <em>caption</em>"), blocks[3])
         assertEquals(DocumentBlock.Table(listOf(listOf("Version", "Status"), listOf("1", "Ready"))), blocks[4])
+    }
+
+    @Test fun `preserves ordered list numbering including start and item values`() {
+        val blocks = HtmlDocumentParser.parse(
+            "<ol start='3'><li>Three</li><li value='7'>Seven</li><li>Eight</li></ol><ul><li>Bullet</li></ul><ol><li>One again</li></ol>",
+        )
+
+        assertEquals(DocumentBlock.ListItem("Three", ordered = true, ordinal = 3), blocks[0])
+        assertEquals(DocumentBlock.ListItem("Seven", ordered = true, ordinal = 7), blocks[1])
+        assertEquals(DocumentBlock.ListItem("Eight", ordered = true, ordinal = 8), blocks[2])
+        assertEquals(DocumentBlock.ListItem("Bullet", ordered = false), blocks[3])
+        assertEquals(DocumentBlock.ListItem("One again", ordered = true, ordinal = 1), blocks[4])
     }
 }

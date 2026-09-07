@@ -549,7 +549,7 @@ private fun ReaderBlock(block: DocumentBlock) {
         is DocumentBlock.Paragraph -> Text(block.text, style = MaterialTheme.typography.bodyLarge, modifier = modifier)
         is DocumentBlock.Quote -> Text("“${block.text}”", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
         is DocumentBlock.Code -> Text(block.text, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainer).padding(8.dp))
-        is DocumentBlock.ListItem -> Text((if (block.ordered) "1. " else "• ") + block.text, style = MaterialTheme.typography.bodyMedium, modifier = modifier)
+        is DocumentBlock.ListItem -> Text((block.ordinal?.let { "$it. " } ?: if (block.ordered) "1. " else "• ") + block.text, style = MaterialTheme.typography.bodyMedium, modifier = modifier)
         is DocumentBlock.Caption -> Text(block.text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
         is DocumentBlock.Table -> Text(block.rows.joinToString("\n") { it.joinToString(" · ") }, style = MaterialTheme.typography.bodySmall, modifier = modifier)
         is DocumentBlock.Image -> Unit

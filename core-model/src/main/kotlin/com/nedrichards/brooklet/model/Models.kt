@@ -34,7 +34,7 @@ data class Entry(
     @Serializable data class Paragraph(val text: String, val html: String? = null, val links: List<DocumentLink> = emptyList()) : DocumentBlock
     @Serializable data class Quote(val text: String, val html: String? = null, val links: List<DocumentLink> = emptyList()) : DocumentBlock
     @Serializable data class Code(val text: String) : DocumentBlock
-    @Serializable data class ListItem(val text: String, val ordered: Boolean, val html: String? = null, val links: List<DocumentLink> = emptyList()) : DocumentBlock
+    @Serializable data class ListItem(val text: String, val ordered: Boolean, val html: String? = null, val links: List<DocumentLink> = emptyList(), val ordinal: Int? = null) : DocumentBlock
     @Serializable data class Caption(val text: String, val html: String? = null, val links: List<DocumentLink> = emptyList()) : DocumentBlock
     @Serializable data class Table(val rows: List<List<String>>) : DocumentBlock
     @Serializable data class Image(val url: String, val description: String?) : DocumentBlock

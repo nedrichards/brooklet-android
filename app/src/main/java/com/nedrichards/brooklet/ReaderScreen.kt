@@ -253,7 +253,7 @@ private fun DocumentBlockView(block: DocumentBlock, articleUrl: String, online: 
         is DocumentBlock.Paragraph -> RichArticleText(block.html, block.text, articleUrl, Modifier.padding(horizontal = 20.dp, vertical = 7.dp), MaterialTheme.typography.bodyLarge)
         is DocumentBlock.Quote -> RichArticleText(block.html, block.text, articleUrl, Modifier.padding(horizontal = 32.dp, vertical = 12.dp), MaterialTheme.typography.bodyLarge)
         is DocumentBlock.Code -> Text(block.text, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp))
-        is DocumentBlock.ListItem -> Row(Modifier.padding(horizontal = 24.dp, vertical = 3.dp)) { Text(if (block.ordered) "1. " else "• ", fontWeight = FontWeight.Bold); RichArticleText(block.html, block.text, articleUrl, Modifier.weight(1f), MaterialTheme.typography.bodyLarge) }
+        is DocumentBlock.ListItem -> Row(Modifier.padding(horizontal = 24.dp, vertical = 3.dp)) { Text(block.ordinal?.let { "$it. " } ?: if (block.ordered) "1. " else "• ", fontWeight = FontWeight.Bold); RichArticleText(block.html, block.text, articleUrl, Modifier.weight(1f), MaterialTheme.typography.bodyLarge) }
         is DocumentBlock.Caption -> RichArticleText(block.html, block.text, articleUrl, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), MaterialTheme.typography.labelMedium)
         is DocumentBlock.Table -> Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { block.rows.forEach { row -> Text(row.joinToString("  ·  "), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 3.dp)) } }
         is DocumentBlock.Image -> OnlineArticleImage(block, articleUrl, online)
@@ -310,7 +310,8 @@ internal fun sanitiseInlineArticleHtml(html: String, articleUrl: String? = null)
 }
 
 private fun safeWebHref(tag: String, articleUrl: String?): String? {
-    val href = Regex("(?is)\\bhref\\s*=\\s*(['\"])(.*?)\\1").find(tag)?.groupValues?.get(2) ?: return null
+    val hrefMatch = Regex("(?is)\\bhref\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))").find(tag) ?: return null
+    val href = hrefMatch.groups[1]?.value ?: hrefMatch.groups[2]?.value ?: hrefMatch.groups[3]?.value ?: return null
     val resolved = runCatching {
         if (articleUrl == null) URI(href) else URI(articleUrl).resolve(href)
     }.getOrNull() ?: return null

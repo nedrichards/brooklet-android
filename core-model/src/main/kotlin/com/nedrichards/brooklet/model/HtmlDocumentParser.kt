@@ -10,7 +10,7 @@ object HtmlDocumentParser {
     // Decode each entity in one pass: decoding &amp; first would accidentally turn
     // the literal text "&amp;#34;" into a quotation mark on the same parse.
     private val entities = Regex(
-        "&(?:(nbsp|amp|lt|gt|quot);|#([xX]?[0-9A-Fa-f]+)(?:;|(?=[^0-9A-Za-z;]|$)))",
+        "&(?:(nbsp|amp|lt|gt|quot|apos);|#([xX]?[0-9A-Fa-f]+)(?:;|(?=[^0-9A-Za-z;]|$)))",
         RegexOption.IGNORE_CASE,
     )
 
@@ -25,7 +25,10 @@ object HtmlDocumentParser {
                 tag == "p" -> DocumentBlock.Paragraph(text(content), richHtml(content), links(content))
                 tag == "blockquote" -> DocumentBlock.Quote(text(content), richHtml(content), links(content))
                 tag == "pre" -> DocumentBlock.Code(decode(tags.replace(content, "")))
-                tag == "li" -> DocumentBlock.ListItem(text(content), ordered = isInsideOrderedList(html, match.range.first), html = richHtml(content), links = links(content))
+                tag == "li" -> {
+                    val ordinal = orderedListOrdinal(html, match.range.first, match.value)
+                    DocumentBlock.ListItem(text(content), ordered = ordinal != null, html = richHtml(content), links = links(content), ordinal = ordinal)
+                }
                 tag == "figcaption" -> DocumentBlock.Caption(text(content), richHtml(content), links(content))
                 tag == "table" -> table(content)
                 else -> null
@@ -61,15 +64,18 @@ object HtmlDocumentParser {
         is DocumentBlock.Table -> block.rows.isEmpty()
         is DocumentBlock.Image -> block.url.isBlank()
     }
-    private fun attribute(tag: String, name: String) = Regex("\\b$name\\s*=\\s*(['\"])(.*?)\\1", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(2)?.let(::decode)
+    private fun attribute(tag: String, name: String) = Regex(
+        "\\b$name\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
+        RegexOption.IGNORE_CASE,
+    ).find(tag)?.let { match -> (match.groups[1]?.value ?: match.groups[2]?.value ?: match.groups[3]?.value)?.let(::decode) }
     private fun text(value: String) = decode(tags.replace(value, " ")).replace(spaces, " ").trim()
     private fun richHtml(value: String) = value.takeIf { Regex("</?(a|strong|b|em|i|code|br)(?:\\s|>|/)", RegexOption.IGNORE_CASE).containsMatchIn(it) }
     private fun links(value: String): List<DocumentLink> = Regex(
-        "<a(?:\\s[^>]*)?href\\s*=\\s*(['\"])(.*?)\\1[^>]*>(.*?)</a>",
+        "<a(?:\\s[^>]*)?>(.*?)</a>",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
     ).findAll(value).mapNotNull { match ->
-        val url = decode(match.groups[2]?.value.orEmpty()).trim()
-        val label = text(match.groups[3]?.value.orEmpty()).ifBlank { url }
+        val url = attribute(match.value.substringBefore('>') + ">", "href")?.trim().orEmpty()
+        val label = text(match.groups[1]?.value.orEmpty()).ifBlank { url }
         url.takeIf { it.isNotEmpty() }?.let { DocumentLink(label, it) }
     }.toList()
 
@@ -103,10 +109,27 @@ object HtmlDocumentParser {
         }.filter(List<String>::isNotEmpty).toList()
         return DocumentBlock.Table(rows)
     }
-    private fun isInsideOrderedList(html: String, position: Int): Boolean {
+    private fun orderedListOrdinal(html: String, position: Int, listItem: String): Int? {
         val before = html.substring(0, position)
-        return before.lastIndexOf("<ol", ignoreCase = true) > before.lastIndexOf("</ol", ignoreCase = true)
+        val openingPosition = before.lastIndexOf("<ol", ignoreCase = true)
+        if (openingPosition <= before.lastIndexOf("</ol", ignoreCase = true)) return null
+
+        val openingTag = Regex("<ol(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE).find(html, openingPosition) ?: return null
+        val explicitValue = integerAttribute(listItem.substringBefore('>') + ">", "value")
+        if (explicitValue != null) return explicitValue
+
+        val start = integerAttribute(openingTag.value, "start") ?: 1
+        return Regex("<li(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE)
+            .findAll(html.substring(openingTag.range.last + 1, position))
+            .fold(start) { nextOrdinal, item ->
+                integerAttribute(item.value, "value")?.plus(1) ?: nextOrdinal + 1
+            }
     }
+
+    private fun integerAttribute(tag: String, name: String): Int? = Regex(
+        "\\b$name\\s*=\\s*(?:\"(-?\\d+)\"|'(-?\\d+)'|(-?\\d+))",
+        RegexOption.IGNORE_CASE,
+    ).find(tag)?.let { match -> (match.groups[1]?.value ?: match.groups[2]?.value ?: match.groups[3]?.value)?.toIntOrNull() }
     private fun decode(value: String) = entities.replace(value) { match ->
         when (match.groups[1]?.value?.lowercase()) {
             "nbsp" -> " "
@@ -114,6 +137,7 @@ object HtmlDocumentParser {
             "lt" -> "<"
             "gt" -> ">"
             "quot" -> "\""
+            "apos" -> "'"
             null -> {
                 val encoded = match.groups[2]!!.value
                 val radix = if (encoded.startsWith('x', ignoreCase = true)) 16 else 10

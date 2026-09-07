@@ -8,6 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ArticleHtmlSanitiserTest {
+    @Test fun `keeps safe unquoted links`() {
+        assertEquals(
+            "<a href=\"https://example.com/story\">Story</a>",
+            sanitiseInlineArticleHtml("<a href=https://example.com/story>Story</a>"),
+        )
+    }
     @Test fun preservesSafeLinksFromPhoronixStyleUnwrappedProse() {
         val paragraph = HtmlDocumentParser.parse(
             """<div class="content">See <a href="/news/next">the next article</a> and <a href="javascript:alert(1)">unsafe text</a>.<br></div>""",
