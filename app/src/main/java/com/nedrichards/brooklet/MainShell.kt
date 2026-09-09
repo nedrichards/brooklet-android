@@ -248,6 +248,7 @@ internal fun MainShellContent(
     val inboxListState = rememberLazyListState()
     val latestInbox by rememberUpdatedState(inbox)
     var pendingInboxReturn by remember { mutableStateOf<InboxListPosition?>(null) }
+    var pendingSettingsMessage by remember { mutableStateOf<String?>(null) }
     var pendingUndoViewportAnchor by remember { mutableStateOf<UndoViewportAnchor?>(null) }
     BackHandler(enabled = readerId != null) { readerId = null }
     BackHandler(enabled = settingsOpen && readerId == null) { settingsOpen = false }
@@ -298,7 +299,32 @@ internal fun MainShellContent(
     val undoFeedbackActive = undoUiState.pending != null ||
         undoUiState.confirmation != null || undoUiState.error != null
     val floatingUiBlocked = undoFeedbackActive || snackbar.currentSnackbarData != null
-    LaunchedEffect(pendingInboxReturn, undoFeedbackActive) {
+    LaunchedEffect(pendingSettingsMessage, settingsOpen, undoFeedbackActive) {
+        if (!settingsOpen) {
+            pendingSettingsMessage = null
+            return@LaunchedEffect
+        }
+        val message = pendingSettingsMessage ?: return@LaunchedEffect
+        // Settings feedback is only useful in Settings. Keep it queued behind
+        // durable Undo feedback, but discard it when Settings is closed.
+        if (undoFeedbackActive) return@LaunchedEffect
+        snackbar.showSnackbar(
+            message = message,
+            withDismissAction = true,
+            duration = SnackbarDuration.Short,
+        )
+        if (pendingSettingsMessage == message) pendingSettingsMessage = null
+    }
+    val inboxWorkspaceVisible = readerId == null && destination == Destination.INBOX &&
+        searchDestination == null && !settingsOpen
+    LaunchedEffect(pendingInboxReturn, undoFeedbackActive, inboxWorkspaceVisible) {
+        // Navigation feedback belongs to the inbox workspace. Cancelling this
+        // effect also removes its active snackbar, while durable feedback such
+        // as Undo is owned by the effects above and remains available.
+        if (!inboxWorkspaceVisible) {
+            pendingInboxReturn = null
+            return@LaunchedEffect
+        }
         val position = pendingInboxReturn ?: return@LaunchedEffect
         // Read-state Undo is the critical action. Wait until its feedback has
         // resolved rather than replacing it with a navigation convenience.
@@ -322,9 +348,6 @@ internal fun MainShellContent(
             }
         }
         pendingInboxReturn = null
-    }
-    LaunchedEffect(destination) {
-        if (destination != Destination.INBOX) pendingInboxReturn = null
     }
     LaunchedEffect(pendingUndoViewportAnchor, inbox, destination) {
         val anchor = pendingUndoViewportAnchor ?: return@LaunchedEffect
@@ -521,13 +544,7 @@ internal fun MainShellContent(
                     )
                 } else if (settingsOpen) {
                     SettingsScreen(application, accountId, padding) { message ->
-                        scope.launch {
-                            snackbar.showSnackbar(
-                                message = message,
-                                withDismissAction = true,
-                                duration = SnackbarDuration.Short,
-                            )
-                        }
+                        pendingSettingsMessage = message
                     }
                 } else {
                     when (destination) {
