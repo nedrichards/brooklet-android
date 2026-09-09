@@ -18,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -369,6 +370,37 @@ class InboxUndoJourneyTest {
 
         compose.onNodeWithText("Jumped to top").assertIsDisplayed()
         compose.onNodeWithText("Entry 30").assertIsDisplayed()
+    }
+
+    @Test fun openingArticleRemovesInboxJumpFeedback() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+
+        compose.onNodeWithTag("destination-inbox").performClick()
+        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+        compose.onNodeWithText("Entry 30").performClick()
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Jumped to top").fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test fun leavingSettingsRemovesSettingsFeedback() {
+        showInbox()
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithText("Save Karakeep and storage settings").performScrollTo().performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Karakeep and storage settings saved").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Karakeep and storage settings saved").assertIsDisplayed()
+
+        compose.onNodeWithContentDescription("Back").performClick()
+
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Karakeep and storage settings saved").fetchSemanticsNodes().isEmpty()
+        }
     }
 
     @Test fun scrollToTopButtonFadesAfterInactivity() {
