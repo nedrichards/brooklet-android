@@ -89,6 +89,47 @@ jobs:
             adb shell wm density 320
             sleep 3
             ./gradlew --no-daemon :app-phone:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.nedrichards.brooklet.KeyboardJourneyTest
+      - name: Summarize Android journey results
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          reports = Path("app/build/outputs/androidTest-results/connected")
+          lines = ["## Android journey test results", ""]
+          files = sorted(reports.rglob("TEST-*.xml")) if reports.exists() else []
+          if not files:
+              lines.append("No connected Android test XML reports were produced.")
+          else:
+              failures = []
+              tests = failed = skipped = 0
+              for report in files:
+                  root = ElementTree.parse(report).getroot()
+                  for suite in root.iter("testsuite"):
+                      tests += int(suite.attrib.get("tests", 0))
+                      failed += int(suite.attrib.get("failures", 0)) + int(suite.attrib.get("errors", 0))
+                      skipped += int(suite.attrib.get("skipped", 0))
+                      for case in suite.findall("testcase"):
+                          issue = case.find("failure")
+                          if issue is None:
+                              issue = case.find("error")
+                          if issue is not None:
+                              details = (issue.text or "").strip()
+                              failures.append((case.attrib.get("classname", suite.attrib.get("name", "test")), case.attrib.get("name", "unknown"), details))
+              lines.append(f"{tests} tests, {failed} failures, {skipped} skipped.")
+              if failures:
+                  lines.extend(["", "### Failures", ""])
+                  for classname, name, details in failures:
+                      lines.append(f"- `{classname}.{name}`")
+                      if details:
+                          lines.append("  ```text")
+                          lines.extend(f"  {line}" for line in details.splitlines()[:12])
+                          lines.append("  ```")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          PY
       - name: Upload journey reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
