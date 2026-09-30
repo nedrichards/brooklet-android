@@ -164,7 +164,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         endpoint,
                         { endpoint = it },
-                        Modifier.fillMaxWidth(),
+                        Modifier.keyboardEditing().fillMaxWidth(),
                         label = { Text("Bookmarks endpoint") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                         keyboardActions = KeyboardActions(onNext = { apiKeyFocus.requestFocus() }),
@@ -173,7 +173,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         apiKey,
                         { apiKey = it },
-                        Modifier.fillMaxWidth().focusRequester(apiKeyFocus),
+                        Modifier.keyboardEditing().fillMaxWidth().focusRequester(apiKeyFocus),
                         label = { Text("API key (blank keeps current key)") },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),

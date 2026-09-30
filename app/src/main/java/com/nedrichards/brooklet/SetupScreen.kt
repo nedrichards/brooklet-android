@@ -103,7 +103,7 @@ fun SetupScreen(application: BrookletApplication) {
         OutlinedTextField(
             server,
             { server = it },
-            Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+            Modifier.keyboardEditing().fillMaxWidth().onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
                     tokenFocus.requestFocus()
                     true
@@ -118,7 +118,7 @@ fun SetupScreen(application: BrookletApplication) {
         OutlinedTextField(
             token,
             { token = it },
-            Modifier.fillMaxWidth().focusRequester(tokenFocus).onPreviewKeyEvent { event ->
+            Modifier.keyboardEditing().fillMaxWidth().focusRequester(tokenFocus).onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp && event.key == Key.Enter && canSubmit) {
                     submit()
                     true

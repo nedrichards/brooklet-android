@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -198,7 +199,6 @@ fun MainShell(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MainShellContent(
     application: BrookletApplication,
@@ -207,13 +207,29 @@ internal fun MainShellContent(
     scheduler: SyncScheduler,
     undoViewModel: InboxUndoViewModel,
     suppressNewEntryNotifications: Boolean = false,
+) = KeyboardWorkspaceHost {
+    MainShellBody(application, accountId, repository, scheduler, undoViewModel, suppressNewEntryNotifications)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainShellBody(
+    application: BrookletApplication,
+    accountId: Long,
+    repository: EntryRepository,
+    scheduler: SyncScheduler,
+    undoViewModel: InboxUndoViewModel,
+    suppressNewEntryNotifications: Boolean = false,
 ) {
+    val keyboard = LocalKeyboardWorkspace.current!!
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val backDispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     var destination by rememberSaveable { mutableStateOf(Destination.INBOX) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var searchDestination by rememberSaveable { mutableStateOf<Destination?>(null) }
     var inboxActionsOpen by remember { mutableStateOf(false) }
     var readerId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var readerOrder by remember { mutableStateOf(emptyList<Long>()) }
+    var readerOrder by rememberSaveable { mutableStateOf(emptyList<Long>()) }
     val inboxFlow = remember(accountId, repository) { repository.inbox(accountId) }
     val savedFlow = remember(accountId, repository) { repository.saved(accountId) }
     val allEntriesFlow = remember(accountId, repository) { repository.allEntries(accountId) }
@@ -249,6 +265,29 @@ internal fun MainShellContent(
     var pendingInboxReturn by remember { mutableStateOf<InboxListPosition?>(null) }
     var pendingSettingsMessage by remember { mutableStateOf<String?>(null) }
     var pendingUndoViewportAnchor by remember { mutableStateOf<UndoViewportAnchor?>(null) }
+    val performUndo = {
+        val pending = undoUiState.pending
+        if (pending != null) {
+            inboxListState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.key is Long && it.key !in pending.entries.keys }
+                ?.let { anchor ->
+                    pendingUndoViewportAnchor = UndoViewportAnchor(
+                        entryId = anchor.key as Long,
+                        itemOffset = anchor.offset,
+                        restoredIds = pending.entries.keys.toSet(),
+                    )
+                }
+            undoViewModel.undo()
+        }
+    }
+    androidx.compose.runtime.SideEffect { keyboard.restoredIds = undoUiState.restoredEntryIds }
+    androidx.compose.runtime.DisposableEffect(keyboard) {
+        onDispose {
+            keyboard.global = { false }
+            keyboard.article = { _, _ -> false }
+            keyboard.restoredIds = emptySet()
+        }
+    }
     BackHandler(enabled = readerId != null) { readerId = null }
     BackHandler(enabled = settingsOpen && readerId == null) { settingsOpen = false }
     BackHandler(enabled = searchDestination != null && readerId == null) { searchDestination = null }
@@ -263,16 +302,7 @@ internal fun MainShellContent(
             duration = if (pending.retry) SnackbarDuration.Long else SnackbarDuration.Short,
         )
         if (result == SnackbarResult.ActionPerformed) {
-            inboxListState.layoutInfo.visibleItemsInfo
-                .firstOrNull { it.key is Long && it.key !in pending.entries.keys }
-                ?.let { anchor ->
-                    pendingUndoViewportAnchor = UndoViewportAnchor(
-                        entryId = anchor.key as Long,
-                        itemOffset = anchor.offset,
-                        restoredIds = pending.entries.keys.toSet(),
-                    )
-                }
-            undoViewModel.undo()
+            performUndo()
         } else {
             undoViewModel.dismiss(pending.generation)
         }
@@ -362,6 +392,42 @@ internal fun MainShellContent(
         )
         pendingUndoViewportAnchor = null
     }
+    androidx.compose.runtime.SideEffect {
+        keyboard.global = { command ->
+            when (command) {
+                InputCommand.BACK -> { backDispatcher?.onBackPressed(); true }
+                InputCommand.UNDO -> if (!settingsOpen && undoUiState.pending != null) { performUndo(); true } else false
+                InputCommand.SEARCH -> if (readerId == null && !settingsOpen) { searchDestination = destination; true } else false
+                InputCommand.SYNC -> if (readerId == null && !settingsOpen) { scheduler.enqueueUserSync(); true } else false
+                InputCommand.REFRESH -> if (readerId == null && !settingsOpen) { scheduler.enqueueManualRefresh(); true } else false
+                InputCommand.SETTINGS -> if (readerId == null) { searchDestination = null; settingsOpen = true; true } else false
+                InputCommand.INBOX, InputCommand.SAVED, InputCommand.LIBRARY -> if (readerId == null && !settingsOpen) {
+                    searchDestination = null
+                    destination = when (command) {
+                        InputCommand.INBOX -> Destination.INBOX
+                        InputCommand.SAVED -> Destination.SAVED
+                        else -> Destination.LIBRARY
+                    }
+                    true
+                } else false
+                else -> false
+            }
+        }
+        keyboard.article = { command, entry ->
+            when (command) {
+                InputCommand.READ -> {
+                    if (!entry.read) undoViewModel.markRead(entry)
+                    else scope.launch { repository.markRead(accountId, entry.id, false) }
+                    true
+                }
+                InputCommand.SAVE -> { scope.launch { repository.setStarred(accountId, entry.id, !entry.starred) }; true }
+                InputCommand.KARAKEEP -> { scope.launch { repository.sendToKarakeep(entry, com.nedrichards.brooklet.model.KarakeepRoute.MINIFLUX) }; true }
+                InputCommand.BROWSER -> { openArticleInBrowser(context, entry); true }
+                InputCommand.SHARE -> { shareArticle(context, entry); true }
+                else -> false
+            }
+        }
+    }
     if (readerId != null) {
         val activeReaderId = readerId!!
         ReaderScreen(
@@ -384,6 +450,7 @@ internal fun MainShellContent(
             },
             onPrevious = readerOrder.before(activeReaderId)?.let { { readerId = it } },
             onNext = readerOrder.after(activeReaderId)?.let { { readerId = it } },
+            onUndo = performUndo,
             snackbarHost = { BrookletSnackbarHost(snackbar) },
         )
         return
@@ -447,6 +514,7 @@ internal fun MainShellContent(
                 if (destination != Destination.LIBRARY) {
                     DropdownMenuItem(
                         text = { Text("Search") },
+                        trailingIcon = { Text(shortcuts.first { it.command == InputCommand.SEARCH }.keys) },
                         leadingIcon = { Icon(Icons.Rounded.Search, null) },
                         onClick = {
                             inboxActionsOpen = false
@@ -460,7 +528,13 @@ internal fun MainShellContent(
                     onClick = { inboxActionsOpen = false; markAllRead() },
                 )
                 DropdownMenuItem(
+                    text = { Text("Keyboard shortcuts") },
+                    trailingIcon = { Text(shortcuts.first { it.command == InputCommand.HELP }.keys) },
+                    onClick = { inboxActionsOpen = false; keyboard.showHelp = true },
+                )
+                DropdownMenuItem(
                     text = { Text("Settings") },
+                    trailingIcon = { Text(shortcuts.first { it.command == InputCommand.SETTINGS }.keys) },
                     leadingIcon = { Icon(Icons.Rounded.Settings, null) },
                     onClick = { inboxActionsOpen = false; settingsOpen = true },
                 )
@@ -471,6 +545,7 @@ internal fun MainShellContent(
     // The reader temporarily replaces the originating workspace. Retain that
     // workspace's list cursor, search, and browse scope until it returns.
     mainContentState.SaveableStateProvider("main-content") { BoxWithConstraints(Modifier.fillMaxSize()) {
+        val destinationState = rememberSaveableStateHolder()
         val useRail = maxWidth >= 600.dp
         Row(Modifier.fillMaxSize()) {
             if (useRail && !settingsOpen) AppRail(destination, selectDestination)
@@ -546,35 +621,37 @@ internal fun MainShellContent(
                         pendingSettingsMessage = message
                     }
                 } else {
-                    when (destination) {
-                        Destination.INBOX -> EntryList(
-                            entries = inbox,
-                            emptyText = if (syncActivity.isActive) "No unread articles cached yet" else "You’re all caught up",
-                            padding = padding,
-                            triage = true,
-                            isRefreshing = syncActivity.userInitiated && syncActivity.isActive,
-                            onRefresh = scheduler::enqueueUserSync,
-                            onRead = markRead,
-                            listState = inboxListState,
-                            onScrollToTop = jumpInboxToTop,
-                            floatingUiBlocked = floatingUiBlocked,
-                            restoredEntryIds = undoUiState.restoredEntryIds,
-                            reportNewEntries = !suppressNewEntryNotifications,
-                        ) { open(it, inbox) }
-                        Destination.SAVED -> SavedList(
-                            entries = saved,
-                            emptyText = if (syncActivity.isActive) "No saved articles cached yet" else "Nothing saved yet",
-                            padding = padding,
-                            floatingUiBlocked = floatingUiBlocked,
-                        ) { open(it, saved) }
-                        Destination.LIBRARY -> LibraryScreen(
-                            entries = all,
-                            categories = categories,
-                            feeds = feeds,
-                            padding = padding,
-                            floatingUiBlocked = floatingUiBlocked,
-                            onOpen = open,
-                        )
+                    destinationState.SaveableStateProvider(destination.name) {
+                        when (destination) {
+                            Destination.INBOX -> EntryList(
+                                entries = inbox,
+                                emptyText = if (syncActivity.isActive) "No unread articles cached yet" else "You’re all caught up",
+                                padding = padding,
+                                triage = true,
+                                isRefreshing = syncActivity.userInitiated && syncActivity.isActive,
+                                onRefresh = scheduler::enqueueUserSync,
+                                onRead = markRead,
+                                listState = inboxListState,
+                                onScrollToTop = jumpInboxToTop,
+                                floatingUiBlocked = floatingUiBlocked,
+                                restoredEntryIds = undoUiState.restoredEntryIds,
+                                reportNewEntries = !suppressNewEntryNotifications,
+                            ) { open(it, inbox) }
+                            Destination.SAVED -> SavedList(
+                                entries = saved,
+                                emptyText = if (syncActivity.isActive) "No saved articles cached yet" else "Nothing saved yet",
+                                padding = padding,
+                                floatingUiBlocked = floatingUiBlocked,
+                            ) { open(it, saved) }
+                            Destination.LIBRARY -> LibraryScreen(
+                                entries = all,
+                                categories = categories,
+                                feeds = feeds,
+                                padding = padding,
+                                floatingUiBlocked = floatingUiBlocked,
+                                onOpen = open,
+                            )
+                        }
                     }
                 }
             }
@@ -582,7 +659,7 @@ internal fun MainShellContent(
     } }
 }
 
-@Composable private fun AppBar(selected: Destination, select: (Destination) -> Unit) = NavigationBar {
+@Composable private fun AppBar(selected: Destination, select: (Destination) -> Unit) = NavigationBar(Modifier.keyboardControls().focusGroup()) {
     Destination.entries.forEach {
         NavigationBarItem(
             selected == it,
@@ -594,7 +671,7 @@ internal fun MainShellContent(
     }
 }
 
-@Composable private fun AppRail(selected: Destination, select: (Destination) -> Unit) = NavigationRail(Modifier.fillMaxHeight()) {
+@Composable private fun AppRail(selected: Destination, select: (Destination) -> Unit) = NavigationRail(Modifier.fillMaxHeight().keyboardControls().focusGroup()) {
     Destination.entries.forEach {
         NavigationRailItem(
             selected == it,
@@ -709,8 +786,9 @@ internal fun EntryList(
                     icon = if (triage) Icons.Rounded.Inbox else Icons.Rounded.Bookmark,
                 )
             } else {
-                LazyColumn(
-                    Modifier.fillMaxSize().testTag("entry-list").semantics {
+                KeyboardArticleList(
+                    entries = entries, onOpen = onOpen,
+                    modifier = Modifier.fillMaxSize().testTag("entry-list").semantics {
                         if (!atTop && onScrollToTop != null) {
                             customActions = listOf(CustomAccessibilityAction("Scroll to top") {
                                 onScrollToTop()
@@ -797,7 +875,8 @@ internal fun EntryList(
 @Composable
 private fun HeadlineRow(entry: Entry, onRead: (() -> Unit)?, onOpen: () -> Unit) {
     val actions = onRead?.let { listOf(CustomAccessibilityAction("Mark read") { it(); true }) }.orEmpty()
-    BrookletHeadlineRow(
+    InputHeadlineRow(
+        entry = entry,
         title = entry.title,
         metadata = entryMetadata(entry),
         onClick = onOpen,
@@ -828,14 +907,15 @@ private fun SavedList(
     } else {
         val listState = rememberLazyListState()
         Box(Modifier.fillMaxSize().padding(padding)) {
-            LazyColumn(
-                Modifier.fillMaxSize(),
+            KeyboardArticleList(
+                entries = entries, onOpen = onOpen,
+                modifier = Modifier.fillMaxSize(),
                 state = listState,
                 contentPadding = PaddingValues(bottom = 88.dp),
             ) {
                 articleItems(entries) { entry ->
                     Column(Modifier.animateItem()) {
-                        BrookletHeadlineRow(entry.title, entryMetadata(entry), { onOpen(entry) }, isUnread = !entry.read) {
+                        InputHeadlineRow(entry, entry.title, entryMetadata(entry), { onOpen(entry) }, isUnread = !entry.read) {
                             SavedStatus(entry.deliveryState)
                         }
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))

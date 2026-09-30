@@ -107,7 +107,7 @@ internal fun ArticleSearchScreen(
         }
     }
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(Unit) { if (query.isBlank()) focusRequester.requestFocus() }
 
     Column(Modifier.fillMaxSize().padding(padding)) {
         TextField(
@@ -116,7 +116,7 @@ internal fun ArticleSearchScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                .focusRequester(focusRequester)
+                .keyboardEditing().focusRequester(focusRequester)
                 .testTag("article-search-field"),
             leadingIcon = { Icon(Icons.Rounded.Search, null) },
             trailingIcon = if (query.isNotEmpty()) {
@@ -245,13 +245,14 @@ private fun SearchEntryResults(
             modifier = Modifier.padding(24.dp),
         )
     } else {
-        androidx.compose.foundation.lazy.LazyColumn(
-            Modifier.fillMaxSize().testTag("entry-list"),
+        KeyboardArticleList(
+            entries, onOpen, Modifier.fillMaxSize().testTag("entry-list"),
             state = listState,
         ) {
             articleItems(entries) { entry ->
                 Column(Modifier.animateItem()) {
-                    com.nedrichards.brooklet.designsystem.BrookletHeadlineRow(
+                    InputHeadlineRow(
+                        entry = entry,
                         title = entry.title,
                         metadata = listOf(
                             entry.feedTitle,

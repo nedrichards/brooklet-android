@@ -108,10 +108,15 @@ fun LibraryScreen(
                     val category = categories.firstOrNull { it.id == categoryId }
                     LibraryBreadcrumb(category?.title ?: "Category", goBack)
                     val categoryFeeds = feedsByCategory[categoryId].orEmpty()
-                    LazyColumn(Modifier.fillMaxSize(), state = categoryListState) {
+                    KeyboardList(
+                        ids = categoryFeeds.map { it.id },
+                        onOpen = { feedId = it },
+                        indexOf = { id -> categoryFeeds.indexOfFirst { it.id == id }.coerceAtLeast(0) },
+                        modifier = Modifier.fillMaxSize(), state = categoryListState,
+                    ) {
                         items(categoryFeeds, key = { it.id }) { feed ->
                             Column(Modifier.animateItem()) {
-                                LibraryNavRow(Icons.Rounded.RssFeed, feed.title, "${feedEntryCounts[feed.id] ?: 0} cached") { feedId = feed.id }
+                                LibraryNavRow(feed.id, Icons.Rounded.RssFeed, feed.title, "${feedEntryCounts[feed.id] ?: 0} cached") { feedId = feed.id }
                             }
                         }
                     }
@@ -146,20 +151,32 @@ private fun LibraryRoot(
     listState: LazyListState,
     onScope: (EntryScope) -> Unit,
     onCategory: (Long) -> Unit,
-) = LazyColumn(Modifier.fillMaxSize(), state = listState) {
-    item { LibraryLabel("Browse") }
-    item { LibraryNavRow(Icons.AutoMirrored.Rounded.LibraryBooks, "All articles", "$entryCount cached") { onScope(EntryScope.ALL) } }
-    item { LibraryNavRow(Icons.Rounded.MarkEmailUnread, "Unread", "$unreadCount articles") { onScope(EntryScope.UNREAD) } }
-    item { LibraryNavRow(Icons.Rounded.MarkEmailRead, "Read", "${entryCount - unreadCount} articles") { onScope(EntryScope.READ) } }
-    item { LibraryLabel("Categories") }
-    items(categories, key = { it.id }) { category ->
-        Column(Modifier.animateItem()) {
-            val categoryFeedCount = feedsByCategory[category.id]?.size ?: 0
-            LibraryNavRow(
-                Icons.Rounded.Folder,
-                category.title,
-                "$categoryFeedCount feeds · ${categoryEntryCounts[category.id] ?: 0} cached",
-            ) { onCategory(category.id) }
+) {
+    val scopes = EntryScope.entries
+    val ids = scopes.map { Long.MIN_VALUE + it.ordinal } + categories.map { it.id }
+    KeyboardList(
+        ids = ids,
+        onOpen = { id ->
+            val scope = scopes.firstOrNull { Long.MIN_VALUE + it.ordinal == id }
+            if (scope != null) onScope(scope) else onCategory(id)
+        },
+        indexOf = { id -> val index = ids.indexOf(id); if (index < 3) index + 1 else index + 2 },
+        modifier = Modifier.fillMaxSize(), state = listState,
+    ) {
+        item { LibraryLabel("Browse") }
+        item(key = Long.MIN_VALUE) { LibraryNavRow(Long.MIN_VALUE, Icons.AutoMirrored.Rounded.LibraryBooks, "All articles", "$entryCount cached") { onScope(EntryScope.ALL) } }
+        item(key = Long.MIN_VALUE + 1) { LibraryNavRow(Long.MIN_VALUE + 1, Icons.Rounded.MarkEmailUnread, "Unread", "$unreadCount articles") { onScope(EntryScope.UNREAD) } }
+        item(key = Long.MIN_VALUE + 2) { LibraryNavRow(Long.MIN_VALUE + 2, Icons.Rounded.MarkEmailRead, "Read", "${entryCount - unreadCount} articles") { onScope(EntryScope.READ) } }
+        item { LibraryLabel("Categories") }
+        items(categories, key = { it.id }) { category ->
+            Column(Modifier.animateItem()) {
+                val categoryFeedCount = feedsByCategory[category.id]?.size ?: 0
+                LibraryNavRow(
+                    category.id, Icons.Rounded.Folder,
+                    category.title,
+                    "$categoryFeedCount feeds · ${categoryEntryCounts[category.id] ?: 0} cached",
+                ) { onCategory(category.id) }
+            }
         }
     }
 }
@@ -173,9 +190,9 @@ private fun LibraryLabel(text: String) = Text(
 )
 
 @Composable
-private fun LibraryNavRow(icon: ImageVector, title: String, supporting: String, onClick: () -> Unit) {
+private fun LibraryNavRow(id: Long, icon: ImageVector, title: String, supporting: String, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 13.dp),
+        Modifier.fillMaxWidth().keyboardListItem(id).clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 16.dp))
@@ -202,10 +219,11 @@ private fun EntryResults(entries: List<Entry>, emptyText: String, listState: Laz
     if (entries.isEmpty()) {
         Text(emptyText, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
     } else {
-        LazyColumn(Modifier.fillMaxSize().testTag("entry-list"), state = listState) {
+        KeyboardArticleList(entries, onOpen, Modifier.fillMaxSize().testTag("entry-list"), state = listState) {
             articleItems(entries) { entry ->
                 Column(Modifier.animateItem()) {
-                    BrookletHeadlineRow(
+                    InputHeadlineRow(
+                        entry = entry,
                         title = entry.title,
                         metadata = listOf(entry.feedTitle, if (entry.read) "Read" else "Unread").filter(String::isNotBlank).joinToString(" · "),
                         onClick = { onOpen(entry) },

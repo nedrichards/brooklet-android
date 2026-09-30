@@ -34,6 +34,14 @@ See [PRIVACY.md](PRIVACY.md) for the full data-handling description. This model
 does not protect data from someone who can unlock or compromise the device, or
 from a Miniflux/Karakeep server or article site chosen by the user.
 
+## Keyboard and mouse
+
+The phone/tablet app supports headline selection with Up/Down or J/K, Enter to
+open, R for read/unread, and U for Undo. Mouse clicks select, double-click opens,
+and right-click shows article actions. Touch tap/swipe behavior is retained.
+Press F1 or use the workspace menu for shortcut help; see
+[the complete keyboard and mouse guide](docs/KEYBOARD_AND_MOUSE.md).
+
 ## Build
 
 You can build the app using Android Studio or any other Android dev tools. The

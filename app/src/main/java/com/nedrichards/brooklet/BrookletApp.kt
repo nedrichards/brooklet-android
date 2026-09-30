@@ -48,14 +48,16 @@ fun BrookletApp(sharedUrl: String? = null, onSharedUrlHandled: () -> Unit = {}) 
         }
     }
     ReportDrawnWhen { accountState is AccountLoadState.Loaded }
-    Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
-        when (val state = accountState) {
-            AccountLoadState.Loading -> FullScreenProgress()
-            is AccountLoadState.Loaded -> {
-                val account = state.account
-                if (account == null) SetupScreen(application)
-                else if (sharedUrl != null) SubscribeScreen(application, account.id, sharedUrl, onDismiss = onSharedUrlHandled)
-                else InitialSyncGate(application, account.id)
+    KeyboardWorkspaceHost {
+        Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+            when (val state = accountState) {
+                AccountLoadState.Loading -> FullScreenProgress()
+                is AccountLoadState.Loaded -> {
+                    val account = state.account
+                    if (account == null) SetupScreen(application)
+                    else if (sharedUrl != null) SubscribeScreen(application, account.id, sharedUrl, onDismiss = onSharedUrlHandled)
+                    else InitialSyncGate(application, account.id)
+                }
             }
         }
     }

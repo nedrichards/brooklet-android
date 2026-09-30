@@ -7,6 +7,10 @@ import android.util.LruCache
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -113,6 +117,7 @@ fun ReaderScreen(
     onPrevious: (() -> Unit)?,
     onNext: (() -> Unit)?,
     snackbarHost: @Composable () -> Unit = {},
+    onUndo: () -> Unit = {},
 ) {
     val entryFlow = remember(accountId, entryId, repository) { repository.entry(accountId, entryId) }
     val positionFlow = remember(accountId, entryId, repository) { repository.position(accountId, entryId) }
@@ -134,28 +139,74 @@ fun ReaderScreen(
     }
 
     val current = entry ?: return FullScreenProgress()
+    val keyboard = LocalKeyboardWorkspace.current
+    val contentFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val density = LocalDensity.current
+    val keepUnread = {
+        scope.launch {
+            repository.markRead(accountId, entryId, false)
+            onKeptUnread()
+        }
+        Unit
+    }
+    val save = { scope.launch { repository.setStarred(accountId, entryId, !current.starred) }; Unit }
+    val karakeep = { scope.launch { repository.sendToKarakeep(current, KarakeepRoute.MINIFLUX) }; Unit }
+    val handle: (InputCommand) -> Boolean = { command ->
+        when (command) {
+            InputCommand.READ -> {
+                // Opening already marks read. Treat the loaded reader as read even
+                // before Room emits that write, so a quick R reliably keeps unread.
+                keepUnread()
+                true
+            }
+            InputCommand.UNDO -> { onUndo(); true }
+            InputCommand.SAVE -> { save(); true }
+            InputCommand.KARAKEEP -> { karakeep(); true }
+            InputCommand.BROWSER -> { openArticleInBrowser(context, current); true }
+            InputCommand.SHARE -> { shareArticle(context, current); true }
+            InputCommand.PREVIOUS -> if (onPrevious != null) { onPrevious(); true } else false
+            InputCommand.NEXT -> if (onNext != null) { onNext(); true } else false
+            InputCommand.FIRST -> { scope.launch { listState.scrollToItem(0) }; true }
+            InputCommand.LAST -> { scope.launch { listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }; true }
+            InputCommand.DOWN, InputCommand.UP, InputCommand.PAGE_DOWN, InputCommand.PAGE_UP, InputCommand.SPACE -> {
+                val page = (listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset) * .9f
+                val amount = if (command in setOf(InputCommand.UP, InputCommand.DOWN)) with(density) { 48.dp.toPx() } else page
+                scope.launch { listState.scrollBy(if (command in setOf(InputCommand.UP, InputCommand.PAGE_UP)) -amount else amount) }
+                true
+            }
+            else -> false
+        }
+    }
+    val latestHandle by androidx.compose.runtime.rememberUpdatedState(handle)
+    androidx.compose.runtime.DisposableEffect(keyboard) {
+        val callback: (InputCommand) -> Boolean = { latestHandle(it) }
+        keyboard?.content = callback
+        onDispose { if (keyboard?.content === callback) keyboard.content = null }
+    }
+    LaunchedEffect(entryId) { contentFocus.requestFocus() }
     Scaffold(
         snackbarHost = snackbarHost,
         topBar = {
             ReaderTopAppBar(
                 entry = current,
                 onBack = onBack,
-                onKeepUnread = {
-                    scope.launch {
-                        repository.markRead(accountId, entryId, false)
-                        onKeptUnread()
-                    }
-                },
-                onOpenInBrowser = { context.startActivity(Intent(Intent.ACTION_VIEW, current.url.toUri())) },
-                onSave = { scope.launch { repository.setStarred(accountId, entryId, !current.starred) } },
-                onSendToKarakeep = { scope.launch { repository.sendToKarakeep(current, KarakeepRoute.MINIFLUX) } },
-                onShareUrl = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, current.url), null)) },
+                onKeepUnread = keepUnread,
+                onOpenInBrowser = { openArticleInBrowser(context, current) },
+                onSave = save,
+                onSendToKarakeep = karakeep,
+                onShareUrl = { shareArticle(context, current) },
             )
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
         LazyColumn(
-            Modifier.widthIn(max = BrookletWidths.reading).fillMaxWidth().align(Alignment.TopCenter).testTag("reader-content"),
+            Modifier.widthIn(max = BrookletWidths.reading).fillMaxWidth().align(Alignment.TopCenter).testTag("reader-content")
+                .focusRequester(contentFocus).onKeyEvent { event ->
+                    val command = shortcutCommand(event)
+                    if (command == null) false
+                    else if (event.nativeKeyEvent.repeatCount > 0 && command !in repeatingCommands) true
+                    else latestHandle(command)
+                }.focusable(),
             state = listState,
         ) {
             item {
@@ -228,16 +279,19 @@ internal fun ReaderTopAppBar(
                     DropdownMenuItem(
                         text = { Text(if (entry.starred) "Remove from saved" else "Save") },
                         leadingIcon = { Icon(if (entry.starred) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, null) },
+                        trailingIcon = { Text(shortcuts.first { it.command == InputCommand.SAVE }.keys) },
                         onClick = { onSave(); moreActionsOpen = false },
                     )
                     DropdownMenuItem(
                         text = { Text("Send to Karakeep") },
                         leadingIcon = { Icon(Icons.Rounded.CloudUpload, null) },
+                        trailingIcon = { Text(shortcuts.first { it.command == InputCommand.KARAKEEP }.keys) },
                         onClick = { onSendToKarakeep(); moreActionsOpen = false },
                     )
                     DropdownMenuItem(
                         text = { Text("Share URL") },
                         leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                        trailingIcon = { Text(shortcuts.first { it.command == InputCommand.SHARE }.keys) },
                         onClick = { onShareUrl(); moreActionsOpen = false },
                     )
                 }
@@ -422,4 +476,14 @@ private fun decodeSampledImage(bytes: ByteArray, targetSizePx: Int): ImageBitmap
     while (bounds.outWidth / sample > targetSizePx || bounds.outHeight / sample > targetSizePx) sample *= 2
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
+}
+
+internal fun openArticleInBrowser(context: Context, entry: com.nedrichards.brooklet.model.Entry) {
+    context.startActivity(Intent(Intent.ACTION_VIEW, entry.url.toUri()))
+}
+
+internal fun shareArticle(context: Context, entry: com.nedrichards.brooklet.model.Entry) {
+    context.startActivity(Intent.createChooser(
+        Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, entry.url), null,
+    ))
 }
