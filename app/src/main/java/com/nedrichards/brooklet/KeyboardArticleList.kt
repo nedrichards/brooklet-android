@@ -149,15 +149,19 @@ internal fun KeyboardList(
         selectedIndex = currentIds.indexOf(id).coerceAtLeast(0)
     }
     CompositionLocalProvider(LocalListSelection provides selection) {
-        LazyColumn(
-            modifier.focusRequester(focus).onFocusChanged { focused = it.isFocused }.onKeyEvent { event ->
+        Box(
+            Modifier.fillMaxSize().focusRequester(focus).onFocusChanged { focused = it.isFocused }.onKeyEvent { event ->
                 val command = shortcutCommand(event)
                 if (command == null || workspace?.editing == true) false
                 else if (event.nativeKeyEvent.repeatCount > 0 && command !in repeatingCommands) true
                 else currentHandle(command)
             }.focusable(),
-            state = state, contentPadding = contentPadding, content = content,
-        )
+        ) {
+            LazyColumn(
+                modifier = modifier.fillMaxSize(),
+                state = state, contentPadding = contentPadding, content = content,
+            )
+        }
     }
 }
 
