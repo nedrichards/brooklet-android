@@ -451,6 +451,10 @@ class InboxUndoJourneyTest {
         val now = System.currentTimeMillis()
         seed(*(1L..30L).map { entry(it, "Entry $it", now + it) }.toTypedArray())
         showInbox()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("entry-list").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithTag("entry-30").fetchSemanticsNodes().isNotEmpty()
+        }
 
         assertTrue(compose.onAllNodesWithText("Today").fetchSemanticsNodes().isEmpty())
         compose.onNodeWithTag("entry-list").performTouchInput { swipeUp() }

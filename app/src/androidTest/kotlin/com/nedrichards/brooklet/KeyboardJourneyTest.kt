@@ -164,6 +164,10 @@ class KeyboardJourneyTest {
     @Test fun mouseClicksOnDifferentHeadlinesCannotAccidentallyOpenAnArticle() {
         seed(6)
         shell()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("entry-6").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithTag("entry-5").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithTag("entry-6").performMouseInput { click() }
         compose.onNodeWithTag("entry-5").performMouseInput { click() }
         compose.onNodeWithTag("entry-6").performMouseInput { click() }
