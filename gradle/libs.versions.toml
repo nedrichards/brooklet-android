@@ -1,7 +1,7 @@
 [versions]
 androidGradlePlugin = "9.4.0"
 kotlin = "2.4.10"
-ksp = "2.3.11"
+ksp = "2.3.12"
 composeBom = "2026.08.00"
 core = "1.19.0"
 activity = "1.13.0"
