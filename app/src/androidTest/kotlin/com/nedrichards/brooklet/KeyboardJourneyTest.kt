@@ -30,6 +30,7 @@ import org.junit.rules.ExternalResource
 @OptIn(ExperimentalTestApi::class)
 class KeyboardJourneyTest {
     private lateinit var database: BrookletDatabase
+    private var newestSeededEntryId: Long? = null
     @get:Rule(order = 0) val cleanup = object : ExternalResource() {
         override fun after() { if (::database.isInitialized) database.close() }
     }
@@ -164,10 +165,6 @@ class KeyboardJourneyTest {
     @Test fun mouseClicksOnDifferentHeadlinesCannotAccidentallyOpenAnArticle() {
         seed(6)
         shell()
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithTag("entry-6").fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodesWithTag("entry-5").fetchSemanticsNodes().isNotEmpty()
-        }
         compose.onNodeWithTag("entry-6").performMouseInput { click() }
         compose.onNodeWithTag("entry-5").performMouseInput { click() }
         compose.onNodeWithTag("entry-6").performMouseInput { click() }
@@ -290,12 +287,18 @@ class KeyboardJourneyTest {
         val content: @Composable () -> Unit = { BrookletTheme(dynamicColor = false) { MainShellContent(app, 1, repository, scheduler, undo) } }
         if (restoration == null) compose.setContent(content) else restoration.setContent(content)
         compose.waitForIdle()
+        newestSeededEntryId?.let { id ->
+            compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-$id").fetchSemanticsNodes().isNotEmpty() }
+        }
     }
     private fun key(key: Key) { compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(key) }; compose.waitForIdle() }
     private fun chord(modifier: Key, key: Key) { compose.onAllNodes(isRoot()).onLast().performKeyInput { keyDown(modifier); pressKey(key); keyUp(modifier) }; compose.waitForIdle() }
     private fun selected(id: Long) { compose.onNodeWithTag("entry-$id").assert(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true)) }
     private fun read(id: Long) = runBlocking { database.dao().entriesById(1, listOf(id)).single().read }
-    private fun seed(count: Int) = runBlocking { database.dao().upsertEntries((1L..count.toLong()).map(::row)) }
+    private fun seed(count: Int) {
+        newestSeededEntryId = count.toLong()
+        runBlocking { database.dao().upsertEntries((1L..count.toLong()).map(::row)) }
+    }
     private fun row(id: Long) = EntryEntity(
         accountId = 1, id = id, feedId = 1, title = "Headline $id", url = "https://example.com/$id", author = null,
         publishedAt = id * 86_400_000, changedAt = id, html = "<p>Article $id</p>", parsedBlocksJson = "[]",

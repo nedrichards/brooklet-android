@@ -52,6 +52,7 @@ import org.junit.rules.ExternalResource
 
 class InboxUndoJourneyTest {
     private lateinit var database: BrookletDatabase
+    private var newestSeededEntryId: Long? = null
 
     // Compose must dispose its Room collectors before the in-memory database
     // closes. A lower-order rule wraps the Compose rule and cleans up last.
@@ -452,10 +453,6 @@ class InboxUndoJourneyTest {
         val now = System.currentTimeMillis()
         seed(*(1L..30L).map { entry(it, "Entry $it", now + it) }.toTypedArray())
         showInbox()
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithTag("entry-list").fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodesWithTag("entry-30").fetchSemanticsNodes().isNotEmpty()
-        }
 
         assertTrue(compose.onAllNodesWithText("Today").fetchSemanticsNodes().isEmpty())
         compose.onNodeWithTag("entry-list").performTouchInput { swipeUp() }
@@ -469,9 +466,13 @@ class InboxUndoJourneyTest {
             }
         }
         compose.waitForIdle()
+        newestSeededEntryId?.let { id ->
+            compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-$id").fetchSemanticsNodes().isNotEmpty() }
+        }
     }
 
     private fun seed(vararg entries: EntryEntity) = runBlocking {
+        newestSeededEntryId = entries.maxByOrNull { it.publishedAt }?.id
         database.dao().upsertEntries(entries.toList())
     }
 
