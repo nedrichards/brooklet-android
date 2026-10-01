@@ -14,6 +14,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -51,6 +52,7 @@ import org.junit.rules.ExternalResource
 
 class InboxUndoJourneyTest {
     private lateinit var database: BrookletDatabase
+    private var newestSeededEntryId: Long? = null
 
     // Compose must dispose its Room collectors before the in-memory database
     // closes. A lower-order rule wraps the Compose rule and cleans up last.
@@ -237,6 +239,9 @@ class InboxUndoJourneyTest {
             assertTrue(actions.single { it.label == "Mark read" }.action())
         }
         compose.waitUntil(5_000) { isRead(1) }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Undo").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("Undo").performClick()
         compose.waitUntil(5_000) { !isRead(1) }
 
@@ -464,9 +469,13 @@ class InboxUndoJourneyTest {
             }
         }
         compose.waitForIdle()
+        newestSeededEntryId?.let { id ->
+            compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-$id").fetchSemanticsNodes().isNotEmpty() }
+        }
     }
 
     private fun seed(vararg entries: EntryEntity) = runBlocking {
+        newestSeededEntryId = entries.maxByOrNull { it.publishedAt }?.id
         database.dao().upsertEntries(entries.toList())
     }
 
