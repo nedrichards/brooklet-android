@@ -239,6 +239,9 @@ class InboxUndoJourneyTest {
             assertTrue(actions.single { it.label == "Mark read" }.action())
         }
         compose.waitUntil(5_000) { isRead(1) }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Undo").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("Undo").performClick()
         compose.waitUntil(5_000) { !isRead(1) }
 

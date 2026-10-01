@@ -212,6 +212,7 @@ class KeyboardJourneyTest {
         seed(6)
         shell()
         key(Key.DirectionDown)
+        selected(6)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val now = android.os.SystemClock.uptimeMillis()
         instrumentation.sendKeySync(android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_R, 0))
