@@ -76,14 +76,14 @@ class HtmlDocumentParserTest {
             DocumentBlock.ListItem(
                 "Two",
                 ordered = true,
-                html = "<a href='https://example.com'>Two</a>",
+                html = "<a href=\"https://example.com\">Two</a>",
                 links = listOf(DocumentLink("Two", "https://example.com")),
                 ordinal = 2,
             ),
             blocks[1],
         )
         assertEquals(DocumentBlock.Caption("A caption", "A <em>caption</em>"), blocks[3])
-        assertEquals(DocumentBlock.Table(listOf(listOf("Version", "Status"), listOf("1", "Ready"))), blocks[4])
+        assertEquals(listOf(listOf("Version", "Status"), listOf("1", "Ready")), (blocks[4] as DocumentBlock.Table).rows)
     }
 
     @Test fun `preserves ordered list numbering including start and item values`() {

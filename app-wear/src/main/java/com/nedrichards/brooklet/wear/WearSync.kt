@@ -31,6 +31,8 @@ import com.nedrichards.brooklet.wear.data.WearTokenCipher
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
@@ -111,7 +113,7 @@ class WearSyncEngine(
         val unread = client.entries(
             MinifluxEntryQuery(status = MinifluxEntryStatus.UNREAD, order = "published_at", limit = 100),
         )
-        dao.mergeRemoteEntries(unread.entries.map(::map))
+        dao.mergeRemoteEntries(unread.entries.map { map(it) })
         dao.upsertSyncState(
             WearSyncStateEntity(
                 changedAfterEpochSeconds = highWater,
@@ -146,7 +148,7 @@ class WearSyncEngine(
             dao.mergeRemotePage(
                 page.entries.filter {
                     MinifluxEntryStatus.fromWire(it.status) in setOf(MinifluxEntryStatus.UNREAD, MinifluxEntryStatus.READ)
-                }.map(::map),
+                }.map { map(it) },
                 removed,
             )
             offset += page.entries.size
@@ -180,8 +182,8 @@ class WearSyncEngine(
         }
     }
 
-    private fun map(dto: EntryDto): WearEntryEntity {
-        val document = WatchDocumentNormalizer.normalize(dto.content)
+    private suspend fun map(dto: EntryDto): WearEntryEntity {
+        val document = withContext(Dispatchers.Default) { WatchDocumentNormalizer.normalize(dto.content) }
         return WearEntryEntity(
             id = dto.id,
             feedId = dto.feedId,

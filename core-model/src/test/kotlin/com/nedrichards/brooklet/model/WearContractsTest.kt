@@ -95,4 +95,16 @@ class WearContractsTest {
         assertEquals(null, paragraph.html)
         assertEquals(listOf(DocumentLink("more", "https://example.com/more")), paragraph.links)
     }
+    @Test fun `watch strips rich table payload but retains nesting and media links`() {
+        val result = WatchDocumentNormalizer.normalize("<ul><li>Parent<ul><li>Child</li></ul></li></ul><table><tr><th colspan='2'>Heading</th></tr><tr><td>A</td><td>B</td></tr></table><audio src='/episode.mp3'></audio>")
+        val items = result.blocks.filterIsInstance<DocumentBlock.ListItem>()
+        assertEquals(listOf(0, 1), items.map { it.depth })
+        val table = result.blocks.filterIsInstance<DocumentBlock.Table>().single()
+        assertTrue(table.cells.isEmpty())
+        assertEquals(listOf(listOf("Heading"), listOf("A", "B")), table.rows)
+        val media = result.blocks.last() as DocumentBlock.Paragraph
+        assertEquals(null, media.html)
+        assertEquals(listOf(DocumentLink("Listen to audio", "/episode.mp3")), media.links)
+        assertEquals(result.byteSize, WatchDocumentNormalizer.encodedSize(result.blocks))
+    }
 }

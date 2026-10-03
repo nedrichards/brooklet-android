@@ -63,6 +63,21 @@ Both applications compile and target API 37.1. The phone minimum is API 28;
 the watch minimum is API 33 (Wear OS 4). Article images remain network-only on
 the phone and are omitted entirely from the watch reader.
 
+## Article rendering
+
+The phone reader preserves headings, links, emphasis, superscript/subscript,
+strikethrough, code blocks, captions, nested lists and quotation paragraphs.
+Tables retain headers, empty cells, links and merged cells in a horizontally
+scrollable grid. Embedded audio, video and frames provide external links rather
+than loading players inside the article. Source colours and active content are
+removed. The structural HTML parser runs in the background; opening a cached
+phone article uses the retained original HTML.
+
+Wear uses the same parser with a text-first presentation: list nesting and
+numbering remain, tables become text rows, and media links open on the phone.
+Rich HTML and table layout metadata are omitted from stored watch bodies.
+Existing normalized watch bodies gain parser improvements when fetched again.
+
 ## Pixel Watch reader
 
 `app-wear` is a compact offline reader designed around the 41 mm Pixel Watch 2

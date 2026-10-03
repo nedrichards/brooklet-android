@@ -74,4 +74,10 @@ class ArticleHtmlSanitiserTest {
 
         assertEquals("""<a>unsafe</a> <a href="https://cdn.example.com/page">web</a>""", result)
     }
+    @Test fun preservesAdditionalInlineFormattingWithoutSourceAttributes() {
+        assertEquals(
+            "<sup>2</sup><sub>n</sub><strike>old</strike><strike>gone</strike>",
+            sanitiseInlineArticleHtml("<sup style='color:red'>2</sup><sub>n</sub><del>old</del><s>gone</s>"),
+        )
+    }
 }

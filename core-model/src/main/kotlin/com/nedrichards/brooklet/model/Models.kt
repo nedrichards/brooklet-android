@@ -34,9 +34,9 @@ data class Entry(
     @Serializable data class Paragraph(val text: String, val html: String? = null, val links: List<DocumentLink> = emptyList()) : DocumentBlock
     @Serializable data class Quote(val text: String, val html: String? = null, val links: List<DocumentLink> = emptyList()) : DocumentBlock
     @Serializable data class Code(val text: String) : DocumentBlock
-    @Serializable data class ListItem(val text: String, val ordered: Boolean, val html: String? = null, val links: List<DocumentLink> = emptyList(), val ordinal: Int? = null) : DocumentBlock
+    @Serializable data class ListItem(val text: String, val ordered: Boolean, val html: String? = null, val links: List<DocumentLink> = emptyList(), val ordinal: Int? = null, val depth: Int = 0) : DocumentBlock
     @Serializable data class Caption(val text: String, val html: String? = null, val links: List<DocumentLink> = emptyList()) : DocumentBlock
-    @Serializable data class Table(val rows: List<List<String>>) : DocumentBlock
+    @Serializable data class Table(val rows: List<List<String>>, val cells: List<TableCell> = emptyList()) : DocumentBlock
     @Serializable data class Image(val url: String, val description: String?) : DocumentBlock
 }
 
@@ -45,3 +45,5 @@ enum class DeliveryState { QUEUED, SENDING, SAVED, NEEDS_ATTENTION }
 enum class KarakeepRoute { MINIFLUX, DIRECT }
 data class ReaderPosition(val entryId: EntryId, val firstVisibleBlock: Int, val offsetPx: Int)
 data class SyncStatus(val running: Boolean = false, val queuedMutations: Int = 0, val lastSuccessfulSyncAt: Long? = null, val error: String? = null)
+
+@Serializable data class TableCell(val row: Int, val column: Int, val text: String, val html: String? = null, val header: Boolean = false, val rowSpan: Int = 1, val columnSpan: Int = 1)

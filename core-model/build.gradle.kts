@@ -5,6 +5,7 @@ plugins {
 kotlin { jvmToolchain(17) }
 dependencies {
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.jsoup)
     implementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
 }

@@ -139,6 +139,7 @@ object WatchDocumentNormalizer {
                 is DocumentBlock.Quote -> block.copy(html = null)
                 is DocumentBlock.ListItem -> block.copy(html = null)
                 is DocumentBlock.Caption -> block.copy(html = null)
+                is DocumentBlock.Table -> block.copy(cells = emptyList())
                 else -> block
             }
         }
