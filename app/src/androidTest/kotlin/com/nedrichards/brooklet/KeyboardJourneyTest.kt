@@ -209,7 +209,7 @@ class KeyboardJourneyTest {
     }
 
     @Test fun readerPagesAndPreviousNextRespectBackConvention() {
-        runBlocking { database.dao().upsertEntries((1L..3L).map { row(it).copy(html = (1..80).joinToString("") { n -> "<p>Paragraph $n with enough text to scroll the reader.</p>" }) }) }
+        seedEntries((1L..3L).map { row(it).copy(html = (1..80).joinToString("") { n -> "<p>Paragraph $n with enough text to scroll the reader.</p>" }) })
         shell()
         key(Key.DirectionDown)
         key(Key.Enter)
@@ -318,8 +318,11 @@ class KeyboardJourneyTest {
     private fun selected(id: Long) { compose.onNodeWithTag("entry-$id").assert(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true)) }
     private fun read(id: Long) = runBlocking { database.dao().entriesById(1, listOf(id)).single().read }
     private fun seed(count: Int) {
-        newestSeededEntryId = count.toLong()
-        runBlocking { database.dao().upsertEntries((1L..count.toLong()).map(::row)) }
+        seedEntries((1L..count.toLong()).map(::row))
+    }
+    private fun seedEntries(entries: List<EntryEntity>) {
+        newestSeededEntryId = entries.maxOfOrNull { it.id }
+        runBlocking { database.dao().upsertEntries(entries) }
     }
     private fun row(id: Long) = EntryEntity(
         accountId = 1, id = id, feedId = 1, title = "Headline $id", url = "https://example.com/$id", author = null,
