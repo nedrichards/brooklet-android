@@ -85,9 +85,9 @@ jobs:
           disable-animations: true
           script: |
             ./gradlew --no-daemon :app-phone:connectedDebugAndroidTest
-            adb shell wm size 2560x1600
-            adb shell wm density 320
-            sleep 3
+            adb shell wm size 1600x1000
+            adb shell wm density 240
+            sleep 8
             ./gradlew --no-daemon :app-phone:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.nedrichards.brooklet.KeyboardJourneyTest
       - name: Summarize Android journey results
         if: always()
