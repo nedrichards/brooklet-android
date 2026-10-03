@@ -436,7 +436,7 @@ private fun ReaderScreen(application: BrookletWearApplication, entryId: Long) {
             application.repository.setRead(entryId, true)
         }
     }
-    if (!positionLoaded) {
+    if (!positionLoaded || entry == null) {
         WearList { item { Text("Opening article…", modifier = Modifier.fillMaxWidth().padding(16.dp)) } }
         return
     }
@@ -444,7 +444,8 @@ private fun ReaderScreen(application: BrookletWearApplication, entryId: Long) {
         { index: Int, offset: Int -> application.saveReaderPosition(entryId, index, offset) }
     }
     WearList(
-        initialAnchorItemIndex = savedPosition?.anchorItemIndex ?: 0,
+        // A negative anchor pins the beginning to the top instead of centering an item.
+        initialAnchorItemIndex = savedPosition?.anchorItemIndex ?: -1,
         initialAnchorItemScrollOffset = savedPosition?.anchorItemScrollOffset ?: 0,
         onPositionChanged = savePosition,
     ) { _ ->
