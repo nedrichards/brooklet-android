@@ -16,6 +16,7 @@ import androidx.compose.ui.focus.*
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -28,6 +29,7 @@ internal class KeyboardListSelection {
     var selectedId by mutableStateOf<Long?>(null)
     var select: (Long) -> Unit = {}
     var record: (Long) -> Unit = {}
+    var clearForTouch: () -> Unit = {}
     var lastMouseId: Long? = null
 }
 private val LocalListSelection = staticCompositionLocalOf<KeyboardListSelection?> { null }
@@ -80,6 +82,7 @@ internal fun KeyboardList(
     val scope = rememberCoroutineScope()
     val workspace = LocalKeyboardWorkspace.current
     val currentIds by rememberUpdatedState(ids)
+    val focusManager = LocalFocusManager.current
     val open by rememberUpdatedState(onOpen)
     val lazyIndex by rememberUpdatedState(indexOf)
     val action by rememberUpdatedState(onCommand)
@@ -148,6 +151,14 @@ internal fun KeyboardList(
         selectedId = id
         selectedIndex = currentIds.indexOf(id).coerceAtLeast(0)
     }
+    selection.clearForTouch = {
+        // Touch changes the input mode, including when a keyboard is attached.
+        // Do not save a cursor that would select a replacement row on return.
+        selectedId = null
+        removedId = null
+        selection.lastMouseId = null
+        focusManager.clearFocus()
+    }
     CompositionLocalProvider(LocalListSelection provides selection) {
         Box(
             Modifier.fillMaxSize().focusRequester(focus).onFocusChanged { focused = it.isFocused }.onKeyEvent { event ->
@@ -196,7 +207,7 @@ internal fun InputHeadlineRow(
     Box {
         BrookletHeadlineRow(
             title, metadata,
-            onClick = { selection?.select?.invoke(entry.id); onClick() },
+            onClick = onClick,
             isUnread = isUnread,
             modifier = modifier.testTag("entry-${entry.id}").keyboardListItem(entry.id)
                 .background(if (hovered && selection?.selectedId != entry.id) MaterialTheme.colorScheme.surfaceContainerHigh else androidx.compose.ui.graphics.Color.Transparent)
@@ -205,6 +216,7 @@ internal fun InputHeadlineRow(
                     var lastClick = 0L
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        if (down.type == PointerType.Touch) selection?.clearForTouch?.invoke()
                         if (down.type == PointerType.Mouse && (currentEvent.buttons.isPrimaryPressed || currentEvent.buttons.isSecondaryPressed)) {
                             val secondary = currentEvent.buttons.isSecondaryPressed
                             down.consume()

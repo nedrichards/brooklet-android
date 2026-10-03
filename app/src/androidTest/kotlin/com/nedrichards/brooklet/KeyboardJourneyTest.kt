@@ -120,6 +120,25 @@ class KeyboardJourneyTest {
         selected(4)
     }
 
+    @Test fun touchOpenClearsKeyboardCursorBeforeReturningToInbox() {
+        seed(6)
+        shell()
+        key(Key.DirectionDown)
+        key(Key.DirectionDown)
+        selected(5)
+        compose.onNodeWithTag("entry-5").performTouchInput { click() }
+        readerDisplayed()
+        compose.waitUntil(5_000) { read(5) }
+        compose.onNodeWithContentDescription("Back").performTouchInput { click() }
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-4").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("entry-4").assertIsNotSelected()
+        compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true))
+            .filter(hasTestTag("entry-6") or hasTestTag("entry-4") or hasTestTag("entry-3") or hasTestTag("entry-2") or hasTestTag("entry-1"))
+            .assertCountEquals(0)
+        key(Key.DirectionDown)
+        selected(6)
+    }
+
     @Test fun searchEditingKeepsLettersArrowsAndUndoAwayFromArticleCommands() {
         seed(6)
         shell()
