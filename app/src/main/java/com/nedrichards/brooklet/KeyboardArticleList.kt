@@ -161,7 +161,7 @@ internal fun KeyboardList(
     }
     CompositionLocalProvider(LocalListSelection provides selection) {
         Box(
-            Modifier.fillMaxSize().focusRequester(focus).onFocusChanged { focused = it.isFocused }.onKeyEvent { event ->
+            Modifier.fillMaxSize().testTag("keyboard-list-focus").focusRequester(focus).onFocusChanged { focused = it.isFocused }.onKeyEvent { event ->
                 val command = shortcutCommand(event)
                 if (command == null || workspace?.editing == true) false
                 else if (event.nativeKeyEvent.repeatCount > 0 && command !in repeatingCommands) true
