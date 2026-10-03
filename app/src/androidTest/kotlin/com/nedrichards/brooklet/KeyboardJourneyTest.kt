@@ -221,8 +221,7 @@ class KeyboardJourneyTest {
         key(Key.Spacebar)
         compose.onNodeWithText("Headline 3").assertIsNotDisplayed()
         chord(Key.AltLeft, Key.PageDown)
-        readerDisplayed()
-        compose.onNodeWithText("Headline 2").assertIsDisplayed()
+        readerDisplayed("Headline 2")
         chord(Key.AltLeft, Key.DirectionLeft)
         compose.onNodeWithTag("entry-list").assertIsDisplayed()
     }
@@ -299,9 +298,13 @@ class KeyboardJourneyTest {
         compose.onNodeWithText("Headline 2").assertIsDisplayed()
     }
 
-    private fun readerDisplayed() {
-        compose.waitUntil(5_000) { compose.onAllNodesWithTag("reader-content").fetchSemanticsNodes().isNotEmpty() }
+    private fun readerDisplayed(title: String? = null) {
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("reader-content").fetchSemanticsNodes().isNotEmpty() &&
+                (title == null || compose.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty())
+        }
         compose.onNodeWithTag("reader-content").assertIsDisplayed()
+        title?.let { compose.onNodeWithText(it).assertIsDisplayed() }
     }
 
     private fun shell(restoration: StateRestorationTester? = null) {
