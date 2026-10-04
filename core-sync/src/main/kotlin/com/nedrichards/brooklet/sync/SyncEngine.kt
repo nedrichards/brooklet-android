@@ -102,8 +102,8 @@ class SyncEngine(
             state(accountId, "PULLING_FEEDS")
             val categories = client.categories()
             val feeds = client.feeds()
-            dao.upsertCategories(categories.map { CategoryEntity(accountId, it.id, it.title) })
-            dao.upsertFeeds(feeds.map { feed -> FeedEntity(accountId, feed.id, feed.category?.id ?: 0, feed.title, feed.siteUrl, feed.feedUrl) })
+            dao.mergeRemoteCategories(accountId, categories.map { CategoryEntity(accountId, it.id, it.title) })
+            dao.mergeRemoteFeeds(accountId, feeds.map { feed -> FeedEntity(accountId, feed.id, feed.category?.id ?: 0, feed.title, feed.siteUrl, feed.feedUrl) })
         }
         var offset = 0
         var newest = cursor

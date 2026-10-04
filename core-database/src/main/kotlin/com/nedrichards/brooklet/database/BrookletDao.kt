@@ -6,6 +6,15 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
+private const val ENTRY_SUMMARY_QUERY = """
+    SELECT e.accountId, e.id, e.feedId, COALESCE(f.title, '') AS feedTitle,
+        COALESCE(c.title, '') AS categoryTitle, e.title, e.url, e.author,
+        e.publishedAt, '' AS html, '[]' AS parsedBlocksJson, e.read, e.starred, e.readingMinutes,
+        NULL AS deliveryState, NULL AS deliveryError
+    FROM entries e LEFT JOIN feeds f ON f.accountId=e.accountId AND f.id=e.feedId
+    LEFT JOIN categories c ON c.accountId=f.accountId AND c.id=f.categoryId
+"""
+
 @Dao
 abstract class BrookletDao {
     @Query("SELECT * FROM accounts WHERE id = 1") abstract fun observeAccount(): Flow<AccountEntity?>
@@ -13,6 +22,10 @@ abstract class BrookletDao {
     @Upsert abstract suspend fun upsertAccount(value: AccountEntity)
     @Upsert abstract suspend fun upsertCategories(values: List<CategoryEntity>)
     @Upsert abstract suspend fun upsertFeeds(values: List<FeedEntity>)
+    @Query("SELECT * FROM categories WHERE accountId = :accountId")
+    protected abstract suspend fun categoriesForAccount(accountId: Long): List<CategoryEntity>
+    @Query("SELECT * FROM feeds WHERE accountId = :accountId")
+    protected abstract suspend fun feedsForAccount(accountId: Long): List<FeedEntity>
     @Upsert abstract suspend fun upsertEntries(values: List<EntryEntity>)
     @Upsert abstract suspend fun upsertPosition(value: ReaderPositionEntity)
     @Upsert abstract suspend fun upsertCursor(value: SyncCursorEntity)
@@ -128,6 +141,12 @@ abstract class BrookletDao {
     @Query("SELECT * FROM sync_cursors WHERE accountId = :accountId") abstract fun observeCursor(accountId: Long): Flow<SyncCursorEntity?>
     @Query("SELECT * FROM sync_state WHERE accountId = :accountId") abstract fun observeSyncState(accountId: Long): Flow<SyncStateEntity?>
     @Query("SELECT COUNT(*) FROM entries WHERE accountId = :accountId") abstract fun observeEntryCount(accountId: Long): Flow<Int>
+    @Query("SELECT feedId, COUNT(*) AS total, SUM(CASE WHEN read = 0 THEN 1 ELSE 0 END) AS unread FROM entries WHERE accountId = :accountId GROUP BY feedId")
+    abstract fun observeLibraryCounts(accountId: Long): Flow<List<FeedEntryCount>>
+    @Query(ENTRY_SUMMARY_QUERY + " WHERE e.accountId = :accountId AND e.feedId = :feedId ORDER BY e.publishedAt DESC")
+    abstract fun observeFeedEntries(accountId: Long, feedId: Long): Flow<List<EntryRow>>
+    @Query(ENTRY_SUMMARY_QUERY + " WHERE e.accountId = :accountId AND e.read = :read ORDER BY e.publishedAt DESC")
+    abstract fun observeReadEntries(accountId: Long, read: Boolean): Flow<List<EntryRow>>
     @Query("SELECT * FROM reader_positions WHERE accountId = :accountId AND entryId = :entryId") abstract fun observePosition(accountId: Long, entryId: Long): Flow<ReaderPositionEntity?>
     @Query("SELECT COUNT(*) FROM pending_mutations WHERE accountId = :accountId AND field = 'READ'")
     abstract fun observePendingReadMutationCount(accountId: Long): Flow<Int>
@@ -185,7 +204,7 @@ abstract class BrookletDao {
         if (remote.isEmpty()) return
         val local = entriesById(accountId, remote.map { it.id }).associateBy { it.id }
         val pending = pendingMutationsForAccount(accountId).groupBy { it.entryId }
-        upsertEntries(remote.map { incoming ->
+        val changed = remote.map { incoming ->
             val existing = local[incoming.id]
             val fields = pending[incoming.id].orEmpty().map { it.field }.toSet()
             incoming.copy(
@@ -193,7 +212,22 @@ abstract class BrookletDao {
                 starred = if ("STARRED" in fields) existing?.starred ?: incoming.starred else incoming.starred,
                 lastOpenedAt = existing?.lastOpenedAt,
             )
-        })
+        }.filter { incoming -> incoming != local[incoming.id] }
+        if (changed.isNotEmpty()) upsertEntries(changed)
+    }
+
+    @Transaction
+    open suspend fun mergeRemoteCategories(accountId: Long, remote: List<CategoryEntity>) {
+        val local = categoriesForAccount(accountId).associateBy { it.id }
+        val changed = remote.filter { it != local[it.id] }
+        if (changed.isNotEmpty()) upsertCategories(changed)
+    }
+
+    @Transaction
+    open suspend fun mergeRemoteFeeds(accountId: Long, remote: List<FeedEntity>) {
+        val local = feedsForAccount(accountId).associateBy { it.id }
+        val changed = remote.filter { it != local[it.id] }
+        if (changed.isNotEmpty()) upsertFeeds(changed)
     }
 
     @Query("""
