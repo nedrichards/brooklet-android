@@ -4,7 +4,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      kotlin:
+        patterns: ['org.jetbrains.kotlin*', 'com.google.devtools.ksp*']
+      androidx:
+        patterns: ['androidx.*']
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
