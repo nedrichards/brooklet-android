@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -19,11 +20,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: gradle/actions/setup-gradle@07d1f8453baaff67fb503883367f8b13e6158a54 # v6
       - name: Verify source and release build
         run: >-
           ./gradlew --no-daemon
           :core-model:test :core-network:test :core-sync:test
-          :app-phone:testDebugUnitTest :app-wear:testDebugUnitTest lintDebug
+          :app-phone:testDebugUnitTest :app-wear:testDebugUnitTest lintDebug lintRelease
           :app-phone:assembleDebug :app-wear:assembleDebug
           :app-phone:assembleRelease :app-wear:assembleRelease
       - name: Verify Wear capabilities survive release shrinking
@@ -60,6 +62,28 @@ jobs:
             echo
             echo "\`${ARTIFACT_SHA}\` · retained for 14 days · GitHub sign-in required"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize verification
+        if: always()
+        run: python3 .github/scripts/verification-summary.py
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verification-reports-${{ github.sha }}
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
+            **/build/reports/lint-results*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload release build APKs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-build-apks-${{ github.sha }}
+          path: '**/build/outputs/apk/**/release/*.apk'
+          if-no-files-found: error
+          retention-days: 14
 
   keyboard:
     name: Keyboard and mouse journeys
@@ -143,3 +167,40 @@ jobs:
             app/build/outputs/androidTest-results/connected/
           if-no-files-found: ignore
           retention-days: 14
+
+  release:
+    name: Draft development APK release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: '*debug*'
+          path: artifacts
+      - name: Prepare labelled APKs and checksums
+        run: |
+          mkdir release-apks
+          python3 - <<'SCRIPT'
+          from pathlib import Path
+          import shutil
+          for apk in Path('artifacts').rglob('*.apk'):
+              name = '-'.join(apk.relative_to('artifacts').parts)
+              shutil.copy2(apk, Path('release-apks') / name)
+          if not list(Path('release-apks').glob('*.apk')):
+              raise SystemExit('No debug APKs were downloaded')
+          SCRIPT
+          cd release-apks
+          sha256sum *.apk > SHA256SUMS
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release-apks/* --verify-tag --draft \
+            --title "$RELEASE_TAG development APKs" \
+            --notes "Verified debug APKs for installation and testing. Signed with a disposable CI debug key; updates from other builds may require reinstalling. Production-signed distribution requires the app's release keystore and versioning procedure. SHA256SUMS is attached."
