@@ -8,8 +8,8 @@ import org.junit.Test
 
 class SyncSchedulerTest {
     @Test
-    fun rapidActionsReplaceThePendingDebounce() {
-        assertEquals(ExistingWorkPolicy.REPLACE, ACTION_DEBOUNCE_POLICY)
+    fun rapidActionsKeepTheFirstDeliveryWindow() {
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, ACTION_DEBOUNCE_POLICY)
     }
 
     @Test
@@ -19,7 +19,7 @@ class SyncSchedulerTest {
 
     @Test
     fun allRealSyncIntentsShareOneSerialPolicySet() {
-        assertEquals(ExistingWorkPolicy.REPLACE, FOREGROUND_SYNC_POLICY)
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, FOREGROUND_SYNC_POLICY)
         assertEquals(ExistingWorkPolicy.KEEP, PERIODIC_DELIVERY_POLICY)
         assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, REFRESH_FOLLOW_UP_POLICY)
         assertEquals(120L, WorkManagerSyncScheduler.PERIODIC_REPEAT_MINUTES)

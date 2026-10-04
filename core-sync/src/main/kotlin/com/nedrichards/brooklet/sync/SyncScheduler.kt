@@ -12,6 +12,14 @@ import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class SyncActivityState { IDLE, QUEUED, RUNNING, RETRYING }
 
@@ -24,9 +32,9 @@ data class SyncActivity(
     val isActive: Boolean get() = state != SyncActivityState.IDLE
 }
 
-internal val ACTION_DEBOUNCE_POLICY = ExistingWorkPolicy.REPLACE
+internal val ACTION_DEBOUNCE_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
 internal val ACTION_DELIVERY_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
-internal val FOREGROUND_SYNC_POLICY = ExistingWorkPolicy.REPLACE
+internal val FOREGROUND_SYNC_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
 internal val PERIODIC_DELIVERY_POLICY = ExistingWorkPolicy.KEEP
 internal val REFRESH_FOLLOW_UP_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
 
@@ -88,32 +96,67 @@ class WorkManagerSyncScheduler(context: Context) : SyncScheduler {
     }
 
     override fun enqueueActionDelivery() {
-        val request = OneTimeWorkRequestBuilder<ActionSyncDebounceWorker>()
-            .addTag(SYNC_CONTROL_WORK)
-            .setInitialDelay(ACTION_DEBOUNCE_SECONDS, TimeUnit.SECONDS)
-            .build()
-        workManager.enqueueUniqueWork(ACTION_DEBOUNCE, ACTION_DEBOUNCE_POLICY, request)
+        schedulingScope.launch { enqueueActionWindow() }
     }
 
-    internal fun enqueueActionWorker() {
-        val request = syncRequest(SyncWorkIntent.ACTION_DELIVERY)
-            .addTag(BACKGROUND_SCHEDULED)
-            .setConstraints(network)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
-            .build()
-        // Debounce collapses a rapid gesture burst. If delivery is already
-        // running, append one follow-up so a later queue snapshot is not lost.
-        workManager.enqueueUniqueWork(SYNC_EXECUTION, ACTION_DELIVERY_POLICY, request)
+    internal suspend fun enqueueActionWindow() {
+        actionWindowMutex.withLock {
+            val active = workManager.getWorkInfosForUniqueWorkFlow(ACTION_DEBOUNCE).first()
+                .filterNot { it.state.isFinished }
+            if (active.any { it.state != androidx.work.WorkInfo.State.RUNNING }) return@withLock
+            val request = OneTimeWorkRequestBuilder<ActionSyncDebounceWorker>()
+                .addTag(SYNC_CONTROL_WORK)
+                .setInitialDelay(ACTION_DEBOUNCE_SECONDS, TimeUnit.SECONDS)
+                .build()
+            // Keep a pending window's original deadline. An action arriving
+            // while its trigger runs gets a successor instead of being lost.
+            withContext(Dispatchers.IO) {
+                workManager.enqueueUniqueWork(ACTION_DEBOUNCE, ACTION_DEBOUNCE_POLICY, request).result.get()
+            }
+        }
+    }
+
+    internal suspend fun enqueueActionWorker() {
+        syncEnqueueMutex.withLock {
+            val active = workManager.getWorkInfosForUniqueWorkFlow(SYNC_EXECUTION).first()
+                .filterNot { it.state.isFinished }
+            // One pending delivery will take a fresh queue snapshot. Keep at
+            // most one follow-up behind a running request during long bursts.
+            if (active.any { it.state != androidx.work.WorkInfo.State.RUNNING && SyncWorkIntent.ACTION_DELIVERY.name in it.tags }) {
+                return@withLock
+            }
+            val request = syncRequest(SyncWorkIntent.ACTION_DELIVERY)
+                .addTag(BACKGROUND_SCHEDULED)
+                .setConstraints(network)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
+                .build()
+            withContext(Dispatchers.IO) {
+                workManager.enqueueUniqueWork(SYNC_EXECUTION, ACTION_DELIVERY_POLICY, request).result.get()
+            }
+        }
     }
 
     override fun enqueueForegroundSync() {
-        val request = syncRequest(SyncWorkIntent.FOREGROUND)
-            .addTag(CANCELLABLE)
-            .setConstraints(network)
-            .build()
-        // A full foreground sync also drains durable actions, so replacing an
-        // action-only run coalesces both intents into one network session.
-        workManager.enqueueUniqueWork(SYNC_EXECUTION, FOREGROUND_SYNC_POLICY, request)
+        schedulingScope.launch { enqueueForegroundWorker() }
+    }
+
+    internal suspend fun enqueueForegroundWorker() {
+        syncEnqueueMutex.withLock {
+            val active = workManager.getWorkInfosForUniqueWorkFlow(SYNC_EXECUTION).first()
+                .filterNot { it.state.isFinished }
+            // A queued or running pull already satisfies foreground
+            // freshness. Preserve it, including any manual refresh.
+            if (active.any { REMOTE_PULL in it.tags }) return@withLock
+            val request = syncRequest(SyncWorkIntent.FOREGROUND)
+                .addTag(CANCELLABLE)
+                .setConstraints(network)
+                .build()
+            // Follow an action-only delivery without cancelling its network
+            // request. Await the enqueue so concurrent starts see this pull.
+            withContext(Dispatchers.IO) {
+                workManager.enqueueUniqueWork(SYNC_EXECUTION, FOREGROUND_SYNC_POLICY, request).result.get()
+            }
+        }
     }
 
     override fun enqueueUserSync() {
@@ -184,9 +227,14 @@ class WorkManagerSyncScheduler(context: Context) : SyncScheduler {
 
     private fun syncRequest(intent: SyncWorkIntent) = OneTimeWorkRequestBuilder<SyncWorker>()
         .addTag(SYNC_WORK)
+        .addTag(intent.name)
         .setInputData(intent.asInputData())
+        .apply { if (intent.pullsRemoteState) addTag(REMOTE_PULL) }
 
     companion object {
+        private val schedulingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        private val syncEnqueueMutex = Mutex()
+        private val actionWindowMutex = Mutex()
         const val SYNC_EXECUTION = "brooklet-sync-execution-v2"
         const val ACTION_DEBOUNCE = "brooklet-action-sync-debounce"
         const val LEGACY_PERIODIC = "brooklet-periodic-sync"
@@ -197,6 +245,7 @@ class WorkManagerSyncScheduler(context: Context) : SyncScheduler {
         const val USER_INITIATED = "brooklet-user-initiated-sync"
         const val BACKGROUND_SCHEDULED = "brooklet-background-scheduled-sync"
         const val CANCELLABLE = "brooklet-cancellable-sync"
+        const val REMOTE_PULL = "brooklet-remote-pull"
         const val ACTION_DEBOUNCE_SECONDS = 2L
         const val PERIODIC_REPEAT_MINUTES = 120L
         const val PERIODIC_FLEX_MINUTES = 30L

@@ -64,7 +64,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     }
 }
 
-/** A durable debounce whose replacement never cancels an in-flight network request. */
+/** A durable batching window that never cancels an in-flight network request. */
 class ActionSyncDebounceWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         WorkManagerSyncScheduler(applicationContext).enqueueActionWorker()
