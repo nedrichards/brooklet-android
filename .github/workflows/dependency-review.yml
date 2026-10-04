@@ -8,6 +8,7 @@ permissions:
 
 jobs:
   dependency-review:
+    if: ${{ !github.event.repository.private || vars.GH_CODE_SECURITY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -15,3 +16,13 @@ jobs:
         with:
           fail-on-severity: high
           fail-on-scopes: runtime
+
+  feature-availability:
+    if: ${{ github.event.repository.private && vars.GH_CODE_SECURITY_ENABLED != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain private repository security coverage
+        run: |
+          echo '::notice::Dependency review and CodeQL require GitHub Code Security for private repositories.'
+          echo 'Dependency review and CodeQL are unavailable without GitHub Code Security on this private repository. Dependabot version updates, vulnerability alerts, resolved dependency submission, tests and lint remain enabled. After enabling the licensed feature, set GH_CODE_SECURITY_ENABLED=true to activate the extra checks.' >> "$GITHUB_STEP_SUMMARY"
