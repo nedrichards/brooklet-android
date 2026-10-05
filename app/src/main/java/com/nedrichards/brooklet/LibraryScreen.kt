@@ -41,12 +41,15 @@ import com.nedrichards.brooklet.designsystem.BrookletHeadlineRow
 import com.nedrichards.brooklet.model.Category
 import com.nedrichards.brooklet.model.Entry
 import com.nedrichards.brooklet.model.Feed
+import com.nedrichards.brooklet.sync.EntryRepository
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 private enum class EntryScope { ALL, UNREAD, READ }
 
 @Composable
 fun LibraryScreen(
-    entries: List<Entry>,
+    accountId: Long,
+    repository: EntryRepository,
     categories: List<Category>,
     feeds: List<Feed>,
     padding: PaddingValues,
@@ -65,21 +68,15 @@ fun LibraryScreen(
         }
     }
     BackHandler(enabled = nested, onBack = goBack)
-    val visibleEntries = remember(entries, feedId, scope) {
-        when {
-            feedId != null -> entries.filter { it.feedId == feedId }
-            scope == EntryScope.UNREAD -> entries.filterNot { it.read }
-            scope == EntryScope.READ -> entries.filter { it.read }
-            scope == EntryScope.ALL -> entries
-            else -> emptyList()
-        }
-    }
-    val feedEntryCounts = remember(entries) { entries.groupingBy { it.feedId }.eachCount() }
+    val countsFlow = remember(accountId, repository) { repository.libraryCounts(accountId) }
+    val counts by countsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val feedEntryCounts = remember(counts) { counts.associate { it.feedId to it.total } }
     val feedsByCategory = remember(feeds) { feeds.groupBy { it.categoryId } }
     val categoryEntryCounts = remember(feedEntryCounts, feedsByCategory) {
         feedsByCategory.mapValues { (_, values) -> values.sumOf { feedEntryCounts[it.id] ?: 0 } }
     }
-    val unreadCount = remember(entries) { entries.count { !it.read } }
+    val entryCount = remember(counts) { counts.sumOf { it.total } }
+    val unreadCount = remember(counts) { counts.sumOf { it.unread } }
     val rootListState = rememberLazyListState()
     val categoryListState = rememberLazyListState()
     val articleListState = rememberLazyListState()
@@ -93,6 +90,18 @@ fun LibraryScreen(
             }
             when {
                 feedId != null || scope != null -> Column {
+                    // A new scope owns its result state, so a previous query's
+                    // articles cannot briefly appear under the new breadcrumb.
+                    val visibleEntries = androidx.compose.runtime.key(feedId, scope) {
+                        val entriesFlow = remember(accountId, repository, feedId, scope) {
+                            repository.libraryEntries(accountId, feedId, when (scope) {
+                                EntryScope.UNREAD -> false
+                                EntryScope.READ -> true
+                                else -> null
+                            })
+                        }
+                        entriesFlow.collectAsStateWithLifecycle(initialValue = emptyList()).value
+                    }
                     LibraryBreadcrumb(
                         title = feedId?.let { id -> feeds.firstOrNull { it.id == id }?.title } ?: when (scope) {
                             EntryScope.ALL -> "All articles"
@@ -122,7 +131,7 @@ fun LibraryScreen(
                     }
                 }
                 else -> LibraryRoot(
-                    entryCount = entries.size,
+                    entryCount = entryCount,
                     unreadCount = unreadCount,
                     categories = categories,
                     feedsByCategory = feedsByCategory,

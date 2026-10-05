@@ -7,7 +7,10 @@ android {
     namespace = "com.nedrichards.brooklet.database"
     compileSdk = 37
     compileSdkMinor = 1
-    defaultConfig { minSdk = 28 }
+    defaultConfig {
+        minSdk = 28
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
     sourceSets { getByName("androidTest").assets.directories.add("schemas") }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }

@@ -115,6 +115,52 @@ class BrookletDaoTest {
         assertEquals(listOf(22L), dao.observeInbox(2).first().map { it.id })
     }
 
+    @Test fun overlappingSyncPagesDoNotRewriteUnchangedEntriesOrLoseLocalIntent() = runBlocking {
+        val remote = entry(accountId = 1, id = 11, read = false)
+        dao.upsertEntries(listOf(remote))
+        dao.setRead(1, 11, read = true, now = 100)
+        val sql = database.openHelper.writableDatabase
+        sql.execSQL("CREATE TABLE merge_write_audit (entryId INTEGER)")
+        sql.execSQL("CREATE TRIGGER audit_entry_update AFTER UPDATE ON entries BEGIN INSERT INTO merge_write_audit VALUES (NEW.id); END")
+        fun writes(): Int = sql.query("SELECT COUNT(*) FROM merge_write_audit").use {
+            it.moveToFirst()
+            it.getInt(0)
+        }
+
+        dao.mergeRemoteEntries(1, listOf(remote))
+        assertEquals(0, writes())
+        assertTrue(dao.observeEntry(1, 11).first()!!.read)
+        assertEquals(100L, dao.entriesById(1, listOf(11)).single().lastOpenedAt)
+
+        val updated = remote.copy(title = "Updated title", starred = true)
+        dao.mergeRemoteEntries(1, listOf(updated))
+        assertEquals(1, writes())
+        assertEquals("Updated title", dao.observeEntry(1, 11).first()!!.title)
+        assertTrue(dao.observeEntry(1, 11).first()!!.starred)
+        dao.mergeRemoteEntries(1, listOf(updated))
+        assertEquals(1, writes())
+    }
+
+    @Test fun libraryCountsAndFilteredSummariesHandleTwentyThousandArticles() = runBlocking {
+        dao.upsertEntries((1L..20_000L).map { id ->
+            entry(accountId = 1, id = id, read = id % 2 == 0L)
+                .copy(feedId = id % 100, html = "<p>Cached article body $id</p>")
+        } + entry(accountId = 2, id = 20_001, read = false))
+
+        val counts = dao.observeLibraryCounts(1).first()
+        assertEquals(100, counts.size)
+        assertEquals(20_000, counts.sumOf { it.total })
+        assertEquals(10_000, counts.sumOf { it.unread })
+        assertEquals(FeedEntryCount(10, 200, 0), counts.first { it.feedId == 10L })
+        val feed = dao.observeFeedEntries(1, 10).first()
+        assertEquals(200, feed.size)
+        assertTrue(feed.all { it.accountId == 1L && it.feedId == 10L && it.html.isEmpty() })
+        assertEquals(feed.map { it.publishedAt }.sortedDescending(), feed.map { it.publishedAt })
+        val unread = dao.observeReadEntries(1, false).first()
+        assertEquals(10_000, unread.size)
+        assertTrue(unread.all { !it.read && it.html.isEmpty() })
+    }
+
     @Test fun entryListsUseAccountAndOrderingIndexesWithoutTemporarySorts() {
         val inboxPlan = queryPlan(
             """

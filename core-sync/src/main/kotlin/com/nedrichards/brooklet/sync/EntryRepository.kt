@@ -26,16 +26,28 @@ class EntryRepository(
 ) {
     private val parsedDocuments = ParsedDocumentCache(maxEntries = 3)
 
-    fun inbox(accountId: Long): Flow<List<Entry>> = dao.observeInbox(accountId).map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
-    fun saved(accountId: Long): Flow<List<Entry>> = dao.observeSaved(accountId).map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
-    fun allEntries(accountId: Long): Flow<List<Entry>> = dao.observeAllEntries(accountId).map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
-    fun categories(accountId: Long): Flow<List<Category>> = dao.observeCategories(accountId).map { values -> values.map { Category(it.id, it.title) } }.flowOn(Dispatchers.Default)
-    fun feeds(accountId: Long): Flow<List<Feed>> = dao.observeFeeds(accountId).map { values -> values.map { Feed(it.id, it.categoryId, it.title, it.siteUrl, it.feedUrl) } }.flowOn(Dispatchers.Default)
+    fun inbox(accountId: Long): Flow<List<Entry>> = dao.observeInbox(accountId).distinctUntilChanged().map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
+    fun saved(accountId: Long): Flow<List<Entry>> = dao.observeSaved(accountId).distinctUntilChanged().map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
+    fun allEntries(accountId: Long): Flow<List<Entry>> = dao.observeAllEntries(accountId).distinctUntilChanged().map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
+    fun categories(accountId: Long): Flow<List<Category>> = dao.observeCategories(accountId).distinctUntilChanged().map { values -> values.map { Category(it.id, it.title) } }.flowOn(Dispatchers.Default)
+    fun feeds(accountId: Long): Flow<List<Feed>> = dao.observeFeeds(accountId).distinctUntilChanged().map { values -> values.map { Feed(it.id, it.categoryId, it.title, it.siteUrl, it.feedUrl) } }.flowOn(Dispatchers.Default)
     fun entry(accountId: Long, entryId: Long): Flow<Entry?> = dao.observeEntry(accountId, entryId)
         .distinctUntilChanged()
         .map { row -> row?.let { map(it, includeBlocks = true) } }
         .flowOn(Dispatchers.Default)
     fun position(accountId: Long, entryId: Long) = dao.observePosition(accountId, entryId)
+
+    fun libraryCounts(accountId: Long) = dao.observeLibraryCounts(accountId).distinctUntilChanged()
+
+    fun libraryEntries(accountId: Long, feedId: Long? = null, read: Boolean? = null): Flow<List<Entry>> {
+        val rows = when {
+            feedId != null -> dao.observeFeedEntries(accountId, feedId)
+            read != null -> dao.observeReadEntries(accountId, read)
+            else -> dao.observeAllEntries(accountId)
+        }
+        return rows.distinctUntilChanged().map { values -> values.map { map(it, includeBlocks = false) } }
+            .flowOn(Dispatchers.Default)
+    }
 
     suspend fun markRead(accountId: Long, entryId: Long, read: Boolean) {
         dao.setRead(accountId, entryId, read, clock())

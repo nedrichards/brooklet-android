@@ -57,3 +57,27 @@ the full profile; the image journey also needs at least one cached read article
 containing an image. Keep generated profiles in source control only after
 comparing `CompilationMode.None` with the Baseline Profile result on physical
 hardware.
+
+## Library scale and interaction regressions
+
+The phone Library targets 10,000–20,000 cached articles. Its root uses database
+counts, and selecting a feed or read scope loads only matching body-free
+summaries through existing indexes. All-article browsing and debounced search
+retain ordinary summary lists at this scale; no paging or additional search
+index is required. Reader next/previous and keyboard navigation keep the full
+result order.
+
+Run the database regression, including a 20,000-article fixture, with:
+
+```sh
+./gradlew :core-database:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.nedrichards.brooklet.database.BrookletDaoTest
+```
+
+Reader position tests cover settled-scroll checkpoints, immediate saves when
+the app stops, and switching articles without applying a previous article's
+position. WorkManager tests cover a fixed two-second action window, coalescing
+pending delivery, and preserving existing refresh work on foreground entry.
+These are correctness checks; use the release frame benchmarks above to
+measure reader opening and swipe/Undo. Emulator timing is a regression signal,
+not evidence of physical-device battery or frame improvements.

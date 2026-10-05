@@ -15,6 +15,13 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.onAllNodesWithText
 import com.nedrichards.brooklet.designsystem.BrookletTheme
 import com.nedrichards.brooklet.model.DocumentBlock
 import com.nedrichards.brooklet.model.HtmlDocumentParser
@@ -32,6 +39,26 @@ class ReaderRenderingTest {
         assertTrue(rendered.spanStyles.any { it.item.baselineShift == BaselineShift.Superscript })
         assertTrue(rendered.spanStyles.any { it.item.baselineShift == BaselineShift.Subscript })
         assertEquals(2, rendered.spanStyles.count { it.item.textDecoration == TextDecoration.LineThrough })
+    }
+
+    @Test fun backgroundRichTextPreparationPreservesLinksAndReplacesOldContent() {
+        var html by mutableStateOf("A <a href='/next'>linked</a> passage")
+        compose.setContent {
+            BrookletTheme(dynamicColor = false) {
+                RichArticleText(html, "Preparing passage", "https://example.com/article", Modifier, MaterialTheme.typography.bodyLarge)
+            }
+        }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("A linked passage").fetchSemanticsNodes().isNotEmpty()
+        }
+        val text = compose.onNodeWithText("A linked passage").fetchSemanticsNode().config[SemanticsProperties.Text].single()
+        assertEquals("https://example.com/next", (text.getLinkAnnotations(0, text.length).single().item as LinkAnnotation.Url).url)
+
+        compose.runOnIdle { html = "<strong>Replacement passage</strong>" }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Replacement passage").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue(compose.onAllNodesWithText("A linked passage").fetchSemanticsNodes().isEmpty())
     }
 
     @Test fun mediaUsesSafeResolvedExternalLinks() {

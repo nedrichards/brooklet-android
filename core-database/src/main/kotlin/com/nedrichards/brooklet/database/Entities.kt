@@ -149,3 +149,5 @@ data class EntryRow(
     val deliveryState: String?,
     val deliveryError: String?,
 )
+
+data class FeedEntryCount(val feedId: Long, val total: Int, val unread: Int)

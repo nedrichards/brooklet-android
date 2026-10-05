@@ -391,6 +391,39 @@ class InboxUndoJourneyTest {
         }
     }
 
+    @Test fun markingAnArticleReadPreemptsVisibleJumpFeedback() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithTag("destination-inbox").performClick()
+        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+
+        compose.onNodeWithText("Entry 30").performTouchInput { swipeLeft() }
+
+        compose.onNodeWithText("Undo").assertIsDisplayed()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Jumped to top").fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test fun jumpingDuringUndoDoesNotQueueNavigationFeedback() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithText("Entry 15").performTouchInput { swipeLeft() }
+        compose.onNodeWithText("Undo").assertIsDisplayed()
+
+        compose.onNodeWithTag("destination-inbox").performClick()
+        compose.onNodeWithText("Undo").assertIsDisplayed()
+        compose.onNodeWithText("Undo").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Undo").fetchSemanticsNodes().isEmpty()
+        }
+        compose.mainClock.advanceTimeBy(6_000)
+        compose.waitForIdle()
+        compose.onNodeWithText("Jumped to top").assertDoesNotExist()
+    }
+
     @Test fun leavingSettingsRemovesSettingsFeedback() {
         showInbox()
         compose.onNodeWithContentDescription("More actions").performClick()
@@ -416,9 +449,9 @@ class InboxUndoJourneyTest {
         compose.onNodeWithTag("entry-list").performTouchInput { swipeDown(startY = centerY, endY = centerY + 100f) }
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed()
 
-        compose.waitUntil(6_000) {
-            compose.onAllNodesWithContentDescription("Scroll to top").fetchSemanticsNodes().isEmpty()
-        }
+        compose.mainClock.advanceTimeBy(4_500)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Scroll to top").assertDoesNotExist()
     }
 
     @Test fun undoSnackbarTakesPriorityOverScrollToTopButton() {

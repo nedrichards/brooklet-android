@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -82,6 +82,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
 import com.nedrichards.brooklet.model.DocumentBlock
 import com.nedrichards.brooklet.designsystem.BrookletSpacing
 import com.nedrichards.brooklet.designsystem.BrookletWidths
@@ -94,6 +96,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.snapshotFlow
 
 private val articleImages by lazy { ArticleImageClient() }
 private val articleImageCache by lazy {
@@ -103,6 +109,14 @@ private val articleImageCache by lazy {
         override fun sizeOf(key: String, value: ImageBitmap): Int =
             ((value.width.toLong() * value.height * 4) / 1024).coerceAtLeast(1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
+}
+
+private data class ArticleTextKey(val html: String, val articleUrl: String, val linkColor: Color)
+private val articleTextCache = object : LruCache<ArticleTextKey, AnnotatedString>(2 * 1024 * 1024) {
+    override fun sizeOf(key: ArticleTextKey, value: AnnotatedString): Int =
+        ((key.html.length.toLong() + key.articleUrl.length + value.length) * 2 +
+            (value.spanStyles.size + value.getLinkAnnotations(0, value.length).size) * 128L)
+            .coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,25 +134,21 @@ fun ReaderScreen(
     onUndo: () -> Unit = {},
 ) {
     val entryFlow = remember(accountId, entryId, repository) { repository.entry(accountId, entryId) }
-    val positionFlow = remember(accountId, entryId, repository) { repository.position(accountId, entryId) }
     val entry by entryFlow.collectAsStateWithLifecycle(initialValue = null)
-    val position by positionFlow.collectAsStateWithLifecycle(initialValue = null)
-    val listState = rememberLazyListState()
+    val listState = remember(accountId, entryId) { LazyListState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val online = rememberOnlineState()
     MarkEntryReadOnOpen(entryId, entry?.id, entry?.read) { repository.markRead(accountId, entryId, true) }
-    LaunchedEffect(entryId, position?.entryId, position?.updatedAt) {
-        val saved = position?.takeIf { it.entryId == entryId }
-        listState.scrollToItem(saved?.firstVisibleBlock ?: 0, saved?.offsetPx ?: 0)
-    }
-    DisposableEffect(entryId) {
-        onDispose {
-            savePosition(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-        }
-    }
+    PersistReaderPosition(
+        entryId = entryId,
+        loadedEntryId = entry?.id,
+        listState = listState,
+        loadPosition = { repository.position(accountId, entryId).first() },
+        savePosition = savePosition,
+    )
 
-    val current = entry ?: return FullScreenProgress()
+    val current = entry?.takeIf { it.id == entryId } ?: return FullScreenProgress()
     val keyboard = LocalKeyboardWorkspace.current
     val contentFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val density = LocalDensity.current
@@ -236,6 +246,55 @@ fun ReaderScreen(
     }
 }
 
+/** Restore once; later checkpoints must never become scroll commands. */
+@Composable
+internal fun PersistReaderPosition(
+    entryId: Long,
+    loadedEntryId: Long?,
+    listState: LazyListState,
+    loadPosition: suspend () -> com.nedrichards.brooklet.database.ReaderPositionEntity?,
+    savePosition: (Int, Int) -> Unit,
+) {
+    var restored by remember(entryId, listState) { mutableStateOf(false) }
+    var lastSaved by remember(entryId, listState) { mutableStateOf<Pair<Int, Int>?>(null) }
+    val latestSave by androidx.compose.runtime.rememberUpdatedState(savePosition)
+    fun checkpoint(save: (Int, Int) -> Unit) {
+        if (!restored) return
+        val position = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        if (position != lastSaved) {
+            save(position.first, position.second)
+            lastSaved = position
+        }
+    }
+    LaunchedEffect(entryId, loadedEntryId, listState) {
+        if (loadedEntryId != entryId || restored) return@LaunchedEffect
+        val saved = loadPosition()
+        val itemCount = snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
+        listState.scrollToItem(
+            (saved?.firstVisibleBlock ?: 0).coerceIn(0, itemCount - 1),
+            (saved?.offsetPx ?: 0).coerceAtLeast(0),
+        )
+        lastSaved = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        restored = true
+    }
+    LaunchedEffect(entryId, listState, restored) {
+        if (!restored) return@LaunchedEffect
+        snapshotFlow {
+            Triple(listState.isScrollInProgress, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+        }.collectLatest { (scrolling, _, _) ->
+            if (!scrolling) {
+                delay(500)
+                checkpoint(latestSave)
+            }
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { checkpoint(latestSave) }
+    DisposableEffect(entryId, listState) {
+        // Capture this article's callback for disposal during next/previous.
+        onDispose { checkpoint(savePosition) }
+    }
+}
+
 /**
  * Mark an unread entry once when it first becomes available to the reader.
  *
@@ -317,11 +376,19 @@ private fun DocumentBlockView(block: DocumentBlock, articleUrl: String, online: 
 @Composable
 internal fun RichArticleText(html: String?, fallback: String, articleUrl: String, modifier: Modifier, style: androidx.compose.ui.text.TextStyle) {
     val linkColor = MaterialTheme.colorScheme.primary
-    val rendered = remember(html, fallback, articleUrl, linkColor) {
-        html?.let { themeSafeArticleText(it, articleUrl, linkColor) } ?: AnnotatedString(fallback)
+    val textKey = remember(html, articleUrl, linkColor) { html?.let { ArticleTextKey(it, articleUrl, linkColor) } }
+    var rendered by remember(textKey) { mutableStateOf(textKey?.let(articleTextCache::get)) }
+    val plainText = remember(fallback) { AnnotatedString(fallback) }
+    LaunchedEffect(textKey) {
+        val key = textKey ?: return@LaunchedEffect
+        if (rendered != null) return@LaunchedEffect
+        rendered = withContext(Dispatchers.Default) {
+            articleTextCache.get(key) ?: themeSafeArticleText(key.html, key.articleUrl, key.linkColor)
+                .also { articleTextCache.put(key, it) }
+        }
     }
     Text(
-        text = rendered,
+        text = rendered ?: plainText,
         style = style,
         color = MaterialTheme.colorScheme.onSurface,
         modifier = modifier,

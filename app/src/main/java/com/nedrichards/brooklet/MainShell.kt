@@ -239,7 +239,7 @@ private fun MainShellBody(
     val savedState = if (destination == Destination.SAVED || searchDestination == Destination.LIBRARY) {
         savedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
-    val allState = if (destination == Destination.LIBRARY) {
+    val allState = if (searchDestination == Destination.LIBRARY) {
         allEntriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val categoriesState = if (destination == Destination.LIBRARY) {
@@ -257,6 +257,11 @@ private fun MainShellBody(
         initialValue = com.nedrichards.brooklet.sync.SyncActivity(),
     )
     val snackbar = remember { SnackbarHostState() }
+    val dismissInboxJumpSnackbar = {
+        if (snackbar.currentSnackbarData?.visuals?.message == "Jumped to top") {
+            snackbar.currentSnackbarData?.dismiss()
+        }
+    }
     val scope = rememberCoroutineScope()
     val undoUiState by undoViewModel.uiState.collectAsStateWithLifecycle()
     val mainContentState = rememberSaveableStateHolder()
@@ -309,6 +314,7 @@ private fun MainShellBody(
     }
     LaunchedEffect(undoUiState.confirmation) {
         val confirmation = undoUiState.confirmation ?: return@LaunchedEffect
+        dismissInboxJumpSnackbar()
         snackbar.showSnackbar(
             message = confirmation,
             withDismissAction = true,
@@ -318,6 +324,7 @@ private fun MainShellBody(
     }
     LaunchedEffect(undoUiState.error) {
         val error = undoUiState.error ?: return@LaunchedEffect
+        dismissInboxJumpSnackbar()
         snackbar.showSnackbar(
             message = error,
             withDismissAction = true,
@@ -337,6 +344,7 @@ private fun MainShellBody(
         // Settings feedback is only useful in Settings. Keep it queued behind
         // durable Undo feedback, but discard it when Settings is closed.
         if (undoFeedbackActive) return@LaunchedEffect
+        dismissInboxJumpSnackbar()
         snackbar.showSnackbar(
             message = message,
             withDismissAction = true,
@@ -355,9 +363,12 @@ private fun MainShellBody(
             return@LaunchedEffect
         }
         val position = pendingInboxReturn ?: return@LaunchedEffect
-        // Read-state Undo is the critical action. Wait until its feedback has
-        // resolved rather than replacing it with a navigation convenience.
-        if (undoFeedbackActive) return@LaunchedEffect
+        // This is transient navigation feedback. Never queue it behind an
+        // existing or pending notification, where it could appear later.
+        if (undoFeedbackActive || snackbar.currentSnackbarData != null) {
+            pendingInboxReturn = null
+            return@LaunchedEffect
+        }
         val result = snackbar.showSnackbar(
             message = "Jumped to top",
             actionLabel = "Go back",
@@ -441,6 +452,7 @@ private fun MainShellBody(
             onKeptUnread = {
                 readerId = null
                 scope.launch {
+                    dismissInboxJumpSnackbar()
                     snackbar.showSnackbar(
                         message = "Kept unread",
                         withDismissAction = true,
@@ -644,7 +656,8 @@ private fun MainShellBody(
                                 floatingUiBlocked = floatingUiBlocked,
                             ) { open(it, saved) }
                             Destination.LIBRARY -> LibraryScreen(
-                                entries = all,
+                                accountId = accountId,
+                                repository = repository,
                                 categories = categories,
                                 feeds = feeds,
                                 padding = padding,

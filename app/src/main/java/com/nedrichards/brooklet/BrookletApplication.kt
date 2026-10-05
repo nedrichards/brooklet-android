@@ -11,6 +11,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.channels.Channel
+import com.nedrichards.brooklet.database.ReaderPositionEntity
 
 class BrookletApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -18,11 +20,10 @@ class BrookletApplication : Application() {
     val scheduler by lazy { WorkManagerSyncScheduler(this) }
     val repository by lazy { EntryRepository(database.dao(), scheduler) }
     val wearProvisioning by lazy { WearProvisioningController(this) }
+    private val positionWrites = Channel<ReaderPositionEntity>(Channel.UNLIMITED)
 
     fun saveReaderPosition(accountId: Long, entryId: Long, block: Int, offset: Int) {
-        applicationScope.launch {
-            repository.savePosition(accountId, entryId, block, offset)
-        }
+        positionWrites.trySend(ReaderPositionEntity(accountId, entryId, block, offset, System.currentTimeMillis()))
     }
 
     suspend fun disconnectAccountAndDeleteLocalData(accountId: Long) {
@@ -34,6 +35,11 @@ class BrookletApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        applicationScope.launch {
+            for (position in positionWrites) {
+                database.dao().upsertPosition(position)
+            }
+        }
         applicationScope.launch {
             if (database.dao().account() != null) scheduler.ensurePeriodic()
         }
