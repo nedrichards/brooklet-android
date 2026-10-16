@@ -28,3 +28,9 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
 }
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+
+// Room exports schemas during KSP. Migration tests must package that output,
+// rather than an older schema copied before KSP regenerated it in this build.
+tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach {
+    dependsOn("kspDebugKotlin")
+}

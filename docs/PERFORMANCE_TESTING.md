@@ -62,10 +62,17 @@ hardware.
 
 The phone Library targets 10,000–20,000 cached articles. Its root uses database
 counts, and selecting a feed or read scope loads only matching body-free
-summaries through existing indexes. All-article browsing and debounced search
-retain ordinary summary lists at this scale; no paging or additional search
-index is required. Reader next/previous and keyboard navigation keep the full
-result order.
+summaries through existing indexes. All-article browsing retains ordinary summary lists at this scale. Local content
+search scans normalised article text in Room, applies scope/filters before a
+501-row query limit, and displays up to 500 body-free summaries. Reader
+next/previous and keyboard navigation keep the displayed result order. Search
+text is prepared in resumable batches after a schema upgrade; status-only sync
+updates reuse the derived body. There is no inverted full text index.
+
+`ArticleSearchDaoTest` includes a 20,000-article body fixture and logs cold/warm
+query timings under the `ArticleSearch` log tag. Run it alongside the migration
+tests before changing search storage or query semantics. Emulator timings are
+regression signals; physical-phone search latency requires device measurements.
 
 Run the database regression, including a 20,000-article fixture, with:
 

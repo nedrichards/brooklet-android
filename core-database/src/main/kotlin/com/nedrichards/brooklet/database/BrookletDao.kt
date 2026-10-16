@@ -5,6 +5,10 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
+import com.nedrichards.brooklet.model.ArticleSearchText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 
 private const val ENTRY_SUMMARY_QUERY = """
     SELECT e.accountId, e.id, e.feedId, COALESCE(f.title, '') AS feedTitle,
@@ -21,12 +25,108 @@ abstract class BrookletDao {
     @Query("SELECT * FROM accounts WHERE id = 1") abstract suspend fun account(): AccountEntity?
     @Upsert abstract suspend fun upsertAccount(value: AccountEntity)
     @Upsert abstract suspend fun upsertCategories(values: List<CategoryEntity>)
-    @Upsert abstract suspend fun upsertFeeds(values: List<FeedEntity>)
+    @Upsert protected abstract suspend fun writeFeeds(values: List<FeedEntity>)
+    open suspend fun upsertFeeds(values: List<FeedEntity>) = writeFeeds(values.map {
+        it.copy(searchTitle = ArticleSearchText.normalize(it.title), searchVersion = ArticleSearchText.VERSION)
+    })
     @Query("SELECT * FROM categories WHERE accountId = :accountId")
     protected abstract suspend fun categoriesForAccount(accountId: Long): List<CategoryEntity>
     @Query("SELECT * FROM feeds WHERE accountId = :accountId")
     protected abstract suspend fun feedsForAccount(accountId: Long): List<FeedEntity>
-    @Upsert abstract suspend fun upsertEntries(values: List<EntryEntity>)
+    @Upsert protected abstract suspend fun writeEntries(values: List<EntryEntity>)
+
+    /** All entry write paths derive text here; status-only changes reuse the cached body. */
+    open suspend fun upsertEntries(values: List<EntryEntity>) = withContext(Dispatchers.Default) {
+        values.chunked(100).forEach { batch ->
+            val previous = batch.groupBy { it.accountId }.flatMap { (accountId, rows) ->
+                entriesById(accountId, rows.map { it.id })
+            }.associateBy { it.accountId to it.id }
+            writeEntries(batch.map { incoming ->
+                val old = previous[incoming.accountId to incoming.id]
+                incoming.copy(
+                    searchTitle = ArticleSearchText.normalize(incoming.title),
+                    searchAuthor = ArticleSearchText.normalize(incoming.author.orEmpty()),
+                    searchBody = if (old?.html == incoming.html && old.searchVersion == ArticleSearchText.VERSION)
+                        old.searchBody else ArticleSearchText.body(incoming.html),
+                    searchVersion = ArticleSearchText.VERSION,
+                )
+            })
+        }
+    }
+
+    @Query("SELECT * FROM entries WHERE accountId = :accountId AND searchVersion < :version LIMIT 100")
+    abstract suspend fun entriesNeedingSearchText(accountId: Long, version: Int = ArticleSearchText.VERSION): List<EntryEntity>
+
+    @Query("SELECT * FROM feeds WHERE accountId = :accountId AND searchVersion < :version LIMIT 100")
+    abstract suspend fun feedsNeedingSearchText(accountId: Long, version: Int = ArticleSearchText.VERSION): List<FeedEntity>
+
+    @Query("""
+        UPDATE entries SET searchTitle = :searchTitle, searchAuthor = :searchAuthor,
+            searchBody = :searchBody, searchVersion = :version
+        WHERE accountId = :accountId AND id = :entryId AND html = :html AND title = :title
+            AND author IS :author AND searchVersion < :version
+    """)
+    abstract suspend fun updateSearchTextIfUnchanged(accountId: Long, entryId: Long, html: String,
+        title: String, author: String?, searchTitle: String, searchAuthor: String, searchBody: String,
+        version: Int = ArticleSearchText.VERSION): Int
+
+    @Query("UPDATE feeds SET searchTitle = :searchTitle, searchVersion = :version WHERE accountId = :accountId AND id = :feedId AND title = :title AND searchVersion < :version")
+    abstract suspend fun updateFeedSearchTextIfUnchanged(accountId: Long, feedId: Long, title: String,
+        searchTitle: String, version: Int = ArticleSearchText.VERSION): Int
+
+    /** Bounded, restartable backfill. Conditional updates cannot resurrect deleted rows or replace newer content. */
+    open suspend fun prepareSearchText(accountId: Long) = withContext(Dispatchers.Default) {
+        while (true) {
+            val rows = entriesNeedingSearchText(accountId)
+            if (rows.isEmpty()) break
+            applySearchTextBatch(rows.map { row -> row.copy(
+                searchTitle = ArticleSearchText.normalize(row.title),
+                searchAuthor = ArticleSearchText.normalize(row.author.orEmpty()),
+                searchBody = ArticleSearchText.body(row.html),
+            ) })
+            yield()
+        }
+        while (true) {
+            val rows = feedsNeedingSearchText(accountId)
+            if (rows.isEmpty()) break
+            applyFeedSearchTextBatch(rows.map { row -> row.copy(searchTitle = ArticleSearchText.normalize(row.title)) })
+            yield()
+        }
+    }
+
+    @Transaction
+    open suspend fun applySearchTextBatch(rows: List<EntryEntity>) {
+        rows.forEach { row -> updateSearchTextIfUnchanged(row.accountId, row.id, row.html, row.title,
+            row.author, row.searchTitle, row.searchAuthor, row.searchBody) }
+    }
+
+    @Transaction
+    open suspend fun applyFeedSearchTextBatch(rows: List<FeedEntity>) {
+        rows.forEach { row -> updateFeedSearchTextIfUnchanged(row.accountId, row.id, row.title, row.searchTitle) }
+    }
+
+    @Query(ENTRY_SUMMARY_QUERY + """
+        WHERE e.accountId = :accountId
+            AND (e.searchTitle LIKE :pattern ESCAPE '\' OR e.searchAuthor LIKE :pattern ESCAPE '\'
+                OR e.searchBody LIKE :pattern ESCAPE '\' OR f.searchTitle LIKE :pattern ESCAPE '\')
+            AND (:scope != 'inbox' OR e.read = 0)
+            AND ((:scope != 'saved' AND :savedOnly = 0) OR e.starred = 1 OR EXISTS (
+                SELECT 1 FROM pending_karakeep k WHERE k.accountId = e.accountId AND k.entryId = e.id))
+            AND (:read IS NULL OR e.read = :read)
+            AND (:feedId IS NULL OR e.feedId = :feedId)
+        ORDER BY e.publishedAt DESC, e.id DESC LIMIT 501
+    """)
+    abstract fun observeSearchEntries(accountId: Long, pattern: String, scope: String,
+        read: Boolean? = null, savedOnly: Boolean = false, feedId: Long? = null): Flow<List<EntryRow>>
+
+    @Query("""
+        SELECT DISTINCT f.* FROM feeds f JOIN entries e ON e.accountId = f.accountId AND e.feedId = f.id
+        WHERE f.accountId = :accountId AND (:scope != 'inbox' OR e.read = 0)
+            AND (:scope != 'saved' OR e.starred = 1 OR EXISTS (
+                SELECT 1 FROM pending_karakeep k WHERE k.accountId = e.accountId AND k.entryId = e.id))
+        ORDER BY f.title COLLATE NOCASE
+    """)
+    abstract fun observeSearchFeeds(accountId: Long, scope: String): Flow<List<FeedEntity>>
     @Upsert abstract suspend fun upsertPosition(value: ReaderPositionEntity)
     @Upsert abstract suspend fun upsertCursor(value: SyncCursorEntity)
     @Upsert abstract suspend fun upsertSyncState(value: SyncStateEntity)
@@ -211,6 +311,10 @@ abstract class BrookletDao {
                 read = if ("READ" in fields) existing?.read ?: incoming.read else incoming.read,
                 starred = if ("STARRED" in fields) existing?.starred ?: incoming.starred else incoming.starred,
                 lastOpenedAt = existing?.lastOpenedAt,
+                searchTitle = existing?.searchTitle.orEmpty(),
+                searchAuthor = existing?.searchAuthor.orEmpty(),
+                searchBody = existing?.searchBody.orEmpty(),
+                searchVersion = existing?.searchVersion ?: 0,
             )
         }.filter { incoming -> incoming != local[incoming.id] }
         if (changed.isNotEmpty()) upsertEntries(changed)
@@ -226,7 +330,10 @@ abstract class BrookletDao {
     @Transaction
     open suspend fun mergeRemoteFeeds(accountId: Long, remote: List<FeedEntity>) {
         val local = feedsForAccount(accountId).associateBy { it.id }
-        val changed = remote.filter { it != local[it.id] }
+        val changed = remote.filter { incoming ->
+            val old = local[incoming.id]
+            incoming.copy(searchTitle = old?.searchTitle.orEmpty(), searchVersion = old?.searchVersion ?: 0) != old
+        }
         if (changed.isNotEmpty()) upsertFeeds(changed)
     }
 

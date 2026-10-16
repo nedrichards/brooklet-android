@@ -155,6 +155,43 @@ class KeyboardJourneyTest {
         compose.onNodeWithTag("article-search-field").assertIsDisplayed()
     }
 
+    @Test fun localBodySearchPreservesQueryFiltersAndIntentionalReadBehaviour() {
+        seedEntries(listOf(
+            row(6).copy(html = "<p>A <b>heat</b> pump in the garden.</p>"),
+            row(5).copy(html = "<p>Another heat pump article.</p>", read = true),
+            row(4).copy(html = "<p>Unrelated article.</p>"),
+        ))
+        shell()
+        chord(Key.CtrlLeft, Key.Three)
+        chord(Key.CtrlLeft, Key.F)
+        compose.onNodeWithTag("article-search-field").performTextInput("heat pump")
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-5").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("entry-4").assertDoesNotExist()
+        compose.onNodeWithTag("keyboard-list-focus").performSemanticsAction(SemanticsActions.RequestFocus)
+        key(Key.DirectionDown)
+        selected(6)
+        assertFalse(read(6))
+        key(Key.Enter)
+        readerDisplayed("Headline 6")
+        compose.waitUntil(5_000) { read(6) }
+        key(Key.Escape)
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-5").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("article-search-field").assertTextContains("heat pump")
+        compose.onNodeWithTag("search-filter-unread").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-6").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithTag("search-filter-read").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-6").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Clear search").performClick()
+        compose.onNodeWithTag("entry-6").assertDoesNotExist()
+        compose.onNodeWithTag("article-search-field").performTextInput("unrelated")
+        // Read filter excludes this unread article until explicitly cleared.
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(
+            "No stored articles match. Only content retained on this device is searched.").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("search-filter-read").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-4").fetchSemanticsNodes().isNotEmpty() }
+        assertFalse(read(4))
+    }
+
     @Test fun tabReachesControlsAndHelpDoesNotMoveSelection() {
         seed(6)
         shell()

@@ -41,7 +41,10 @@ class BrookletApplication : Application() {
             }
         }
         applicationScope.launch {
-            if (database.dao().account() != null) scheduler.ensurePeriodic()
+            database.dao().account()?.let { account ->
+                scheduler.ensurePeriodic()
+                runCatching { repository.prepareSearch(account.id) }
+            }
         }
         // Advertise phone provisioning as soon as Brooklet starts, rather
         // than waiting until the user opens Settings.

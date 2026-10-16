@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         EnclosureEntity::class, ReaderPositionEntity::class, SyncCursorEntity::class,
         PendingMutationEntity::class, PendingKarakeepEntity::class, KarakeepConfigEntity::class,
         StoragePolicyEntity::class, SyncStateEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class BrookletDatabase : RoomDatabase() {
@@ -28,7 +28,20 @@ abstract class BrookletDatabase : RoomDatabase() {
             context.applicationContext,
             BrookletDatabase::class.java,
             "brooklet.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE entries ADD COLUMN searchTitle TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE entries ADD COLUMN searchAuthor TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE entries ADD COLUMN searchBody TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE entries ADD COLUMN searchVersion INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE feeds ADD COLUMN searchTitle TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE feeds ADD COLUMN searchVersion INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX index_entries_accountId_searchVersion ON entries (accountId, searchVersion)")
+                db.execSQL("CREATE INDEX index_feeds_accountId_searchVersion ON feeds (accountId, searchVersion)")
+            }
+        }
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {

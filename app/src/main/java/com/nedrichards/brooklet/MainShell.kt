@@ -232,15 +232,11 @@ private fun MainShellBody(
     var readerOrder by rememberSaveable { mutableStateOf(emptyList<Long>()) }
     val inboxFlow = remember(accountId, repository) { repository.inbox(accountId) }
     val savedFlow = remember(accountId, repository) { repository.saved(accountId) }
-    val allEntriesFlow = remember(accountId, repository) { repository.allEntries(accountId) }
     val categoriesFlow = remember(accountId, repository) { repository.categories(accountId) }
     val feedsFlow = remember(accountId, repository) { repository.feeds(accountId) }
     val inbox by inboxFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-    val savedState = if (destination == Destination.SAVED || searchDestination == Destination.LIBRARY) {
+    val savedState = if (destination == Destination.SAVED) {
         savedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-    } else remember { mutableStateOf(emptyList()) }
-    val allState = if (searchDestination == Destination.LIBRARY) {
-        allEntriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val categoriesState = if (destination == Destination.LIBRARY) {
         categoriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -249,10 +245,8 @@ private fun MainShellBody(
         feedsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     } else remember { mutableStateOf(emptyList()) }
     val saved by savedState
-    val all by allState
     val categories by categoriesState
     val feeds by feedsState
-    val savedEntryIds = remember(saved) { saved.mapTo(mutableSetOf()) { it.id } }
     val syncActivity by scheduler.activity.collectAsStateWithLifecycle(
         initialValue = com.nedrichards.brooklet.sync.SyncActivity(),
     )
@@ -609,20 +603,15 @@ private fun MainShellBody(
             ) { padding ->
                 val activeSearchDestination = searchDestination
                 if (activeSearchDestination != null) {
-                    val searchEntries = when (activeSearchDestination) {
-                        Destination.INBOX -> inbox
-                        Destination.SAVED -> saved
-                        Destination.LIBRARY -> all
-                    }
                     ArticleSearchScreen(
                         workspaceLabel = activeSearchDestination.label,
-                        entries = searchEntries,
-                        feeds = feeds,
-                        savedEntryIds = if (activeSearchDestination == Destination.LIBRARY) {
-                            savedEntryIds
-                        } else {
-                            emptySet()
+                        accountId = accountId,
+                        scope = when (activeSearchDestination) {
+                            Destination.INBOX -> "inbox"
+                            Destination.SAVED -> "saved"
+                            Destination.LIBRARY -> "library"
                         },
+                        repository = repository,
                         showLibraryFilters = activeSearchDestination == Destination.LIBRARY,
                         padding = padding,
                         floatingUiBlocked = floatingUiBlocked,

@@ -2,6 +2,7 @@ package com.nedrichards.brooklet.database
 
 import androidx.room.Entity
 import androidx.room.Index
+import androidx.room.ColumnInfo
 
 @Entity(tableName = "accounts")
 data class AccountEntity(
@@ -20,7 +21,7 @@ data class CategoryEntity(val accountId: Long, val id: Long, val title: String)
 @Entity(
     tableName = "feeds",
     primaryKeys = ["accountId", "id"],
-    indices = [Index(value = ["accountId", "categoryId"])],
+    indices = [Index(value = ["accountId", "categoryId"]), Index(value = ["accountId", "searchVersion"])],
 )
 data class FeedEntity(
     val accountId: Long,
@@ -29,6 +30,8 @@ data class FeedEntity(
     val title: String,
     val siteUrl: String,
     val feedUrl: String,
+    @ColumnInfo(defaultValue = "''") val searchTitle: String = "",
+    @ColumnInfo(defaultValue = "0") val searchVersion: Int = 0,
 )
 
 @Entity(
@@ -36,6 +39,7 @@ data class FeedEntity(
     primaryKeys = ["accountId", "id"],
     indices = [
         Index(value = ["accountId", "publishedAt"]),
+        Index(value = ["accountId", "searchVersion"]),
         Index(value = ["accountId", "read", "publishedAt"]),
         Index(value = ["accountId", "starred", "publishedAt"]),
         Index(value = ["accountId", "feedId", "publishedAt"]),
@@ -56,6 +60,10 @@ data class EntryEntity(
     val starred: Boolean,
     val readingMinutes: Int,
     val lastOpenedAt: Long?,
+    @ColumnInfo(defaultValue = "''") val searchTitle: String = "",
+    @ColumnInfo(defaultValue = "''") val searchAuthor: String = "",
+    @ColumnInfo(defaultValue = "''") val searchBody: String = "",
+    @ColumnInfo(defaultValue = "0") val searchVersion: Int = 0,
 )
 
 @Entity(tableName = "enclosures", primaryKeys = ["accountId", "entryId", "url"], indices = [Index("entryId")])

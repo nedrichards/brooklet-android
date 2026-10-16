@@ -14,9 +14,15 @@ import com.nedrichards.brooklet.model.KarakeepRoute
 import com.nedrichards.brooklet.model.canonicalUrl
 import com.nedrichards.brooklet.network.MinifluxClient
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.catch
+import com.nedrichards.brooklet.model.ArticleSearchText
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 
 class EntryRepository(
@@ -24,7 +30,31 @@ class EntryRepository(
     private val scheduler: SyncScheduler,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    private val searchPreparation = Mutex()
+    suspend fun prepareSearch(accountId: Long) = searchPreparation.withLock { dao.prepareSearchText(accountId) }
+
     private val parsedDocuments = ParsedDocumentCache(maxEntries = 3)
+
+    fun searchFeeds(accountId: Long, scope: String): Flow<List<Feed>> =
+        dao.observeSearchFeeds(accountId, scope).map { values ->
+            values.map { Feed(it.id, it.categoryId, it.title, it.siteUrl, it.feedUrl) }
+        }.distinctUntilChanged().flowOn(Dispatchers.Default)
+
+    fun search(accountId: Long, query: String, scope: String, read: Boolean? = null,
+        savedOnly: Boolean = false, feedId: Long? = null): Flow<ArticleSearchState> = flow {
+        if (ArticleSearchText.normalize(query).isBlank()) {
+            emit(ArticleSearchState())
+        } else {
+            if (dao.entriesNeedingSearchText(accountId).isNotEmpty() || dao.feedsNeedingSearchText(accountId).isNotEmpty()) {
+                emit(ArticleSearchState(preparing = true))
+                prepareSearch(accountId)
+            }
+            emitAll(dao.observeSearchEntries(accountId, ArticleSearchText.pattern(query), scope, read, savedOnly, feedId)
+                .map { rows -> ArticleSearchState(
+                    entries = rows.take(SEARCH_RESULT_LIMIT).map { map(it, includeBlocks = false) },
+                ) })
+        }
+    }.catch { emit(ArticleSearchState(failed = true)) }.flowOn(Dispatchers.Default)
 
     fun inbox(accountId: Long): Flow<List<Entry>> = dao.observeInbox(accountId).distinctUntilChanged().map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
     fun saved(accountId: Long): Flow<List<Entry>> = dao.observeSaved(accountId).distinctUntilChanged().map { rows -> rows.map { map(it, includeBlocks = false) } }.flowOn(Dispatchers.Default)
@@ -126,3 +156,11 @@ class EntryRepository(
         }
     }
 }
+
+const val SEARCH_RESULT_LIMIT = 500
+
+data class ArticleSearchState(
+    val entries: List<Entry> = emptyList(),
+    val preparing: Boolean = false,
+    val failed: Boolean = false,
+)

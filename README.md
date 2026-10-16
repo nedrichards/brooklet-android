@@ -63,6 +63,17 @@ Both applications compile and target API 37.1. The phone minimum is API 28;
 the watch minimum is API 33 (Wear OS 4). Article images remain network-only on
 the phone and are omitted entirely from the watch reader.
 
+## Local article search
+
+Search in Inbox, Saved, or Library includes titles, feed names, authors, and
+article text retained on this device. It works offline and treats the query as
+a literal phrase or substring, including punctuation. Library searches the whole
+local cache; unread/read, Saved, and feed filters narrow the results.
+
+Existing articles are prepared locally after an upgrade. Search cannot find
+content omitted by a partial feed or removed by the storage policy, and it does
+not fetch original pages.
+
 ## Article rendering
 
 The phone reader preserves headings, links, emphasis, superscript/subscript,

@@ -27,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -39,43 +38,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.nedrichards.brooklet.model.Entry
-import com.nedrichards.brooklet.model.Feed
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.CircularProgressIndicator
+import com.nedrichards.brooklet.sync.EntryRepository
+import com.nedrichards.brooklet.sync.ArticleSearchState
 
 internal enum class SearchReadFilter { ANY, UNREAD, READ }
-
-internal fun filterSearchEntries(
-    entries: List<Entry>,
-    query: String,
-    readFilter: SearchReadFilter = SearchReadFilter.ANY,
-    savedOnly: Boolean = false,
-    feedId: Long? = null,
-    savedEntryIds: Set<Long> = emptySet(),
-): List<Entry> {
-    val term = query.trim()
-    if (term.isEmpty()) return emptyList()
-    return entries.filter { entry ->
-        val matchesText = entry.title.contains(term, ignoreCase = true) ||
-            entry.feedTitle.contains(term, ignoreCase = true) ||
-            entry.author?.contains(term, ignoreCase = true) == true
-        val matchesRead = when (readFilter) {
-            SearchReadFilter.ANY -> true
-            SearchReadFilter.UNREAD -> !entry.read
-            SearchReadFilter.READ -> entry.read
-        }
-        matchesText && matchesRead && (!savedOnly || entry.id in savedEntryIds) &&
-            (feedId == null || entry.feedId == feedId)
-    }
-}
 
 @Composable
 internal fun ArticleSearchScreen(
     workspaceLabel: String,
-    entries: List<Entry>,
-    feeds: List<Feed>,
-    savedEntryIds: Set<Long>,
+    accountId: Long,
+    scope: String,
+    repository: EntryRepository,
     showLibraryFilters: Boolean,
     padding: PaddingValues,
     floatingUiBlocked: Boolean,
@@ -88,24 +64,22 @@ internal fun ArticleSearchScreen(
     var feedMenuOpen by remember { mutableStateOf(false) }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
-    val availableFeedIds = remember(entries) { entries.mapTo(mutableSetOf()) { it.feedId } }
-    val availableFeeds = remember(feeds, availableFeedIds) {
-        feeds.filter { it.id in availableFeedIds }
+    val feedsFlow = remember(accountId, scope, repository) { repository.searchFeeds(accountId, scope) }
+    val availableFeeds by feedsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    var debouncedQuery by remember { mutableStateOf("") }
+    LaunchedEffect(query) {
+        if (query.isNotBlank()) delay(SEARCH_DEBOUNCE_MS)
+        debouncedQuery = query
     }
-    val results by produceState(
-        initialValue = emptyList(),
-        entries,
-        query,
-        readFilter,
-        savedOnly,
-        feedId,
-        savedEntryIds,
-    ) {
-        delay(SEARCH_DEBOUNCE_MS)
-        value = withContext(Dispatchers.Default) {
-            filterSearchEntries(entries, query, readFilter, savedOnly, feedId, savedEntryIds)
-        }
+    val searchFlow = remember(accountId, scope, repository, debouncedQuery, readFilter, savedOnly, feedId) {
+        repository.search(accountId, debouncedQuery, scope, when (readFilter) {
+            SearchReadFilter.ANY -> null
+            SearchReadFilter.UNREAD -> false
+            SearchReadFilter.READ -> true
+        }, savedOnly, feedId)
     }
+    val state by searchFlow.collectAsStateWithLifecycle(initialValue = ArticleSearchState())
+    val results = if (query.isBlank()) emptyList() else state.entries
 
     LaunchedEffect(Unit) { if (query.isBlank()) focusRequester.requestFocus() }
 
@@ -128,7 +102,7 @@ internal fun ArticleSearchScreen(
             } else {
                 null
             },
-            placeholder = { Text("Search cached $workspaceLabel articles") },
+            placeholder = { Text("Search stored $workspaceLabel articles") },
             singleLine = true,
             shape = RoundedCornerShape(28.dp),
             colors = TextFieldDefaults.colors(
@@ -137,7 +111,7 @@ internal fun ArticleSearchScreen(
             ),
         )
 
-        if (showLibraryFilters || availableFeeds.size > 1) {
+        if (showLibraryFilters || availableFeeds.size > 1 || feedId != null) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -176,11 +150,11 @@ internal fun ArticleSearchScreen(
                         modifier = Modifier.padding(end = 8.dp).testTag("search-filter-saved"),
                     )
                 }
-                if (availableFeeds.size > 1) {
+                if (availableFeeds.size > 1 || feedId != null) {
                     Box {
                         val selectedFeed = availableFeeds.firstOrNull { it.id == feedId }
                         FilterChip(
-                            selected = selectedFeed != null,
+                            selected = feedId != null,
                             onClick = { feedMenuOpen = true },
                             label = { Text(selectedFeed?.title ?: "Feed") },
                             modifier = Modifier.widthIn(max = 220.dp),
@@ -214,10 +188,17 @@ internal fun ArticleSearchScreen(
         Box(Modifier.fillMaxWidth().weight(1f)) {
             if (query.isBlank()) {
                 Text(
-                    "Search cached articles in $workspaceLabel",
+                    "Search titles and article text stored in $workspaceLabel",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(24.dp),
                 )
+            } else if (state.failed) {
+                Text("Couldn’t search stored articles. Reopen search to retry.", modifier = Modifier.padding(24.dp))
+            } else if (state.preparing || (results.isEmpty() && query != debouncedQuery)) {
+                Column(Modifier.padding(24.dp)) {
+                    if (state.preparing) Text("Preparing stored articles for search…")
+                    CircularProgressIndicator()
+                }
             } else {
                 SearchEntryResults(results, listState) { onOpen(it, results) }
             }
@@ -240,7 +221,7 @@ private fun SearchEntryResults(
 ) {
     if (entries.isEmpty()) {
         Text(
-            "No cached articles match",
+            "No stored articles match. Only content retained on this device is searched.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(24.dp),
         )
