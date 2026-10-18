@@ -88,6 +88,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -107,6 +108,8 @@ import com.nedrichards.brooklet.sync.SyncActivityState
 import com.nedrichards.brooklet.sync.EntryRepository
 import com.nedrichards.brooklet.sync.SyncScheduler
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import java.util.concurrent.TimeUnit
 
 private enum class Destination(val label: String, val icon: ImageVector) {
@@ -251,17 +254,15 @@ private fun MainShellBody(
         initialValue = com.nedrichards.brooklet.sync.SyncActivity(),
     )
     val snackbar = remember { SnackbarHostState() }
-    val dismissInboxJumpSnackbar = {
-        if (snackbar.currentSnackbarData?.visuals?.message == "Jumped to top") {
-            snackbar.currentSnackbarData?.dismiss()
-        }
-    }
     val scope = rememberCoroutineScope()
     val undoUiState by undoViewModel.uiState.collectAsStateWithLifecycle()
     val mainContentState = rememberSaveableStateHolder()
     val inboxListState = rememberLazyListState()
     val latestInbox by rememberUpdatedState(inbox)
     var pendingInboxReturn by remember { mutableStateOf<InboxListPosition?>(null) }
+    var inboxTopPulse by remember { mutableLongStateOf(0) }
+    var inboxJumpJob by remember { mutableStateOf<Job?>(null) }
+    val accessibilityManager = LocalAccessibilityManager.current
     var pendingSettingsMessage by remember { mutableStateOf<String?>(null) }
     var pendingUndoViewportAnchor by remember { mutableStateOf<UndoViewportAnchor?>(null) }
     val performUndo = {
@@ -308,7 +309,6 @@ private fun MainShellBody(
     }
     LaunchedEffect(undoUiState.confirmation) {
         val confirmation = undoUiState.confirmation ?: return@LaunchedEffect
-        dismissInboxJumpSnackbar()
         snackbar.showSnackbar(
             message = confirmation,
             withDismissAction = true,
@@ -318,7 +318,6 @@ private fun MainShellBody(
     }
     LaunchedEffect(undoUiState.error) {
         val error = undoUiState.error ?: return@LaunchedEffect
-        dismissInboxJumpSnackbar()
         snackbar.showSnackbar(
             message = error,
             withDismissAction = true,
@@ -338,7 +337,6 @@ private fun MainShellBody(
         // Settings feedback is only useful in Settings. Keep it queued behind
         // durable Undo feedback, but discard it when Settings is closed.
         if (undoFeedbackActive) return@LaunchedEffect
-        dismissInboxJumpSnackbar()
         snackbar.showSnackbar(
             message = message,
             withDismissAction = true,
@@ -348,39 +346,27 @@ private fun MainShellBody(
     }
     val inboxWorkspaceVisible = readerId == null && destination == Destination.INBOX &&
         searchDestination == null && !settingsOpen
-    LaunchedEffect(pendingInboxReturn, undoFeedbackActive, inboxWorkspaceVisible) {
-        // Navigation feedback belongs to the inbox workspace. Cancelling this
-        // effect also removes its active snackbar, while durable feedback such
-        // as Undo is owned by the effects above and remains available.
+    val latestInboxWorkspaceVisible by rememberUpdatedState(inboxWorkspaceVisible)
+    val latestFloatingUiBlocked by rememberUpdatedState(floatingUiBlocked)
+    LaunchedEffect(inboxWorkspaceVisible) {
         if (!inboxWorkspaceVisible) {
+            inboxJumpJob?.cancel()
+            pendingInboxReturn = null
+            inboxTopPulse = 0
+        }
+    }
+    LaunchedEffect(pendingInboxReturn, floatingUiBlocked) {
+        if (pendingInboxReturn == null) return@LaunchedEffect
+        if (!inboxWorkspaceVisible || floatingUiBlocked) {
             pendingInboxReturn = null
             return@LaunchedEffect
         }
-        val position = pendingInboxReturn ?: return@LaunchedEffect
-        // This is transient navigation feedback. Never queue it behind an
-        // existing or pending notification, where it could appear later.
-        if (undoFeedbackActive || snackbar.currentSnackbarData != null) {
-            pendingInboxReturn = null
-            return@LaunchedEffect
-        }
-        val result = snackbar.showSnackbar(
-            message = "Jumped to top",
-            actionLabel = "Go back",
-            withDismissAction = true,
-            duration = SnackbarDuration.Short,
-        )
-        if (result == SnackbarResult.ActionPerformed) {
-            val currentEntries = latestInbox
-            val targetIndex = currentEntries.indexOfFirst { it.id == position.entryId }
-                .takeIf { it >= 0 }
-                ?: position.fallbackIndex.coerceIn(0, (currentEntries.lastIndex).coerceAtLeast(0))
-            if (currentEntries.isNotEmpty()) {
-                inboxListState.animateScrollToItem(
-                    articleLazyListIndex(currentEntries, targetIndex),
-                    position.scrollOffset,
-                )
-            }
-        }
+        delay(accessibilityManager?.calculateRecommendedTimeoutMillis(
+            originalTimeoutMillis = 4_000L,
+            containsIcons = false,
+            containsText = true,
+            containsControls = true,
+        ) ?: 4_000L)
         pendingInboxReturn = null
     }
     LaunchedEffect(pendingUndoViewportAnchor, inbox, destination) {
@@ -446,7 +432,6 @@ private fun MainShellBody(
             onKeptUnread = {
                 readerId = null
                 scope.launch {
-                    dismissInboxJumpSnackbar()
                     snackbar.showSnackbar(
                         message = "Kept unread",
                         withDismissAction = true,
@@ -466,13 +451,48 @@ private fun MainShellBody(
     val markAllRead = { undoViewModel.markAllRead(inbox) }
     val open: (Entry, List<Entry>) -> Unit = { entry, list -> readerOrder = list.map { it.id }; readerId = entry.id }
     val jumpInboxToTop = jump@{
-        if (pendingInboxReturn != null) return@jump
+        if (inboxJumpJob?.isActive == true) return@jump
         val anchor = inboxListState.layoutInfo.visibleItemsInfo.firstOrNull { it.key is Long } ?: return@jump
         val entryId = anchor.key as Long
         val entryIndex = inbox.indexOfFirst { it.id == entryId }.takeIf { it >= 0 } ?: return@jump
-        if (entryIndex == 0 && anchor.offset == 0) return@jump
-        pendingInboxReturn = InboxListPosition(entryId, entryIndex, (-anchor.offset).coerceAtLeast(0))
-        scope.launch { inboxListState.animateScrollToItem(0) }
+        val position = InboxListPosition(entryId, entryIndex, (-anchor.offset).coerceAtLeast(0))
+        // The hidden leading date header still occupies a lazy-list index.
+        // Use the first article's position to recognize that visual top too.
+        val wasAwayFromTop = inboxListState.canScrollBackward && (entryIndex > 0 || anchor.offset < 0)
+        // A tap already at the top only replays the arrival cue.
+        if (!wasAwayFromTop) {
+            pendingInboxReturn = null
+            inboxTopPulse++
+            return@jump
+        }
+        pendingInboxReturn = null
+        inboxJumpJob = scope.launch {
+            inboxListState.animateScrollToItem(0)
+            // Only signal arrival after a completed scroll. User gestures can
+            // cancel it; a cancelled jump must not flash or offer a return.
+            inboxTopPulse++
+            if (!floatingUiBlocked && latestInboxWorkspaceVisible && !latestFloatingUiBlocked) {
+                pendingInboxReturn = position
+            }
+        }
+    }
+    val returnToInboxPosition = {
+        val position = pendingInboxReturn
+        pendingInboxReturn = null
+        if (position != null) {
+            scope.launch {
+                val currentEntries = latestInbox
+                val targetIndex = currentEntries.indexOfFirst { it.id == position.entryId }
+                    .takeIf { it >= 0 }
+                    ?: position.fallbackIndex.coerceIn(0, currentEntries.lastIndex.coerceAtLeast(0))
+                if (currentEntries.isNotEmpty()) {
+                    inboxListState.animateScrollToItem(
+                        articleLazyListIndex(currentEntries, targetIndex),
+                        position.scrollOffset,
+                    )
+                }
+            }
+        }
     }
     val selectDestination: (Destination) -> Unit = { selected ->
         if (searchDestination != null) {
@@ -634,6 +654,8 @@ private fun MainShellBody(
                                 onRead = markRead,
                                 listState = inboxListState,
                                 onScrollToTop = jumpInboxToTop,
+                                topPulse = inboxTopPulse,
+                                onReturnFromTop = if (pendingInboxReturn != null && !floatingUiBlocked) returnToInboxPosition else null,
                                 floatingUiBlocked = floatingUiBlocked,
                                 restoredEntryIds = undoUiState.restoredEntryIds,
                                 reportNewEntries = !suppressNewEntryNotifications,
@@ -697,6 +719,8 @@ internal fun EntryList(
     onRead: (Entry) -> Unit,
     listState: LazyListState = rememberLazyListState(),
     onScrollToTop: (() -> Unit)? = null,
+    topPulse: Long = 0,
+    onReturnFromTop: (() -> Unit)? = null,
     floatingUiBlocked: Boolean = false,
     restoredEntryIds: Set<Long> = emptySet(),
     reportNewEntries: Boolean = true,
@@ -838,7 +862,7 @@ internal fun EntryList(
             }
         }
         AnimatedVisibility(
-            visible = queuedNewEntries > 0 && !floatingUiBlocked,
+            visible = queuedNewEntries > 0 && !floatingUiBlocked && onReturnFromTop == null,
             enter = fadeIn() + scaleIn(initialScale = .92f),
             exit = fadeOut() + scaleOut(targetScale = .92f),
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
@@ -863,6 +887,21 @@ internal fun EntryList(
                         Icon(Icons.Rounded.Close, "Dismiss new articles")
                     }
                 }
+            }
+        }
+        TopEdgePulse(
+            generation = topPulse,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+        if (onReturnFromTop != null && !floatingUiBlocked) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+                shape = BrookletShapes.capsule,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                shadowElevation = 3.dp,
+            ) {
+                TextButton(onClick = onReturnFromTop) { Text("Go back") }
             }
         }
         ScrollToTopButton(

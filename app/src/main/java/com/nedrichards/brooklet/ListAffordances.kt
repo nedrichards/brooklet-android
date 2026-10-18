@@ -5,6 +5,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material.icons.Icons
@@ -22,12 +27,31 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 private const val ScrollToTopVisibleMillis = 4_000L
+
+/** Draw-only arrival feedback: leaves row geometry and pull-to-refresh alone. */
+@Composable
+internal fun TopEdgePulse(generation: Long, modifier: Modifier = Modifier) {
+    val alpha = remember { Animatable(0f) }
+    val color = MaterialTheme.colorScheme.primary
+    LaunchedEffect(generation) {
+        alpha.snapTo(0f)
+        if (generation == 0L) return@LaunchedEffect
+        // Animatable follows Compose's system motion duration scale, including
+        // skipping the pulse when animations are disabled.
+        alpha.animateTo(.24f, tween(100))
+        alpha.animateTo(0f, tween(500))
+    }
+    Canvas(modifier.fillMaxWidth().height(32.dp)) {
+        drawRect(Brush.verticalGradient(listOf(color.copy(alpha = alpha.value), color.copy(alpha = 0f))))
+    }
+}
 
 @Composable
 internal fun ScrollToTopButton(

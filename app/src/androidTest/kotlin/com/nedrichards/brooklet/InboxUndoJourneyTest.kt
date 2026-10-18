@@ -358,7 +358,8 @@ class InboxUndoJourneyTest {
 
         compose.onNodeWithTag("destination-inbox").performClick()
 
-        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+        compose.onNodeWithText("Jumped to top").assertDoesNotExist()
+        compose.onNodeWithText("Go back").assertIsDisplayed()
         compose.onNodeWithText("Entry 30").assertIsDisplayed()
         compose.onNodeWithText("Go back").performClick()
         compose.onNodeWithText("Entry 15").assertIsDisplayed()
@@ -373,8 +374,46 @@ class InboxUndoJourneyTest {
 
         compose.onNodeWithContentDescription("Scroll to top").assertIsDisplayed().performClick()
 
-        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+        compose.onNodeWithText("Jumped to top").assertDoesNotExist()
+        compose.onNodeWithText("Go back").assertIsDisplayed()
         compose.onNodeWithText("Entry 30").assertIsDisplayed()
+    }
+
+    @Test fun reselectingInboxAtTopDoesNotOfferGoBack() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+
+        compose.onNodeWithTag("destination-inbox").performClick()
+
+        compose.onNodeWithText("Entry 30").assertIsDisplayed()
+        compose.onNodeWithText("Go back").assertDoesNotExist()
+        compose.onNodeWithText("Jumped to top").assertDoesNotExist()
+    }
+
+    @Test fun reselectingInboxAfterJumpClearsGoBack() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithTag("destination-inbox").performClick()
+        compose.onNodeWithText("Go back").assertIsDisplayed()
+
+        compose.onNodeWithTag("destination-inbox").performClick()
+
+        compose.onNodeWithText("Entry 30").assertIsDisplayed()
+        compose.onNodeWithText("Go back").assertDoesNotExist()
+    }
+
+    @Test fun goBackExpiresAfterJump() {
+        seed(*(1L..30L).map { entry(it, "Entry $it", it) }.toTypedArray())
+        showInbox()
+        compose.onNodeWithTag("entry-list").performScrollToIndex(15)
+        compose.onNodeWithTag("destination-inbox").performClick()
+        compose.onNodeWithText("Go back").assertIsDisplayed()
+
+        compose.mainClock.advanceTimeBy(5_000)
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Go back").assertDoesNotExist()
     }
 
     @Test fun openingArticleRemovesInboxJumpFeedback() {
@@ -383,11 +422,12 @@ class InboxUndoJourneyTest {
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
 
         compose.onNodeWithTag("destination-inbox").performClick()
-        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+        compose.onNodeWithText("Jumped to top").assertDoesNotExist()
+        compose.onNodeWithText("Go back").assertIsDisplayed()
         compose.onNodeWithText("Entry 30").performClick()
 
         compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("Jumped to top").fetchSemanticsNodes().isEmpty()
+            compose.onAllNodesWithText("Go back").fetchSemanticsNodes().isEmpty()
         }
     }
 
@@ -396,13 +436,14 @@ class InboxUndoJourneyTest {
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
         compose.onNodeWithTag("destination-inbox").performClick()
-        compose.onNodeWithText("Jumped to top").assertIsDisplayed()
+        compose.onNodeWithText("Jumped to top").assertDoesNotExist()
+        compose.onNodeWithText("Go back").assertIsDisplayed()
 
         compose.onNodeWithText("Entry 30").performTouchInput { swipeLeft() }
 
         compose.onNodeWithText("Undo").assertIsDisplayed()
         compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("Jumped to top").fetchSemanticsNodes().isEmpty()
+            compose.onAllNodesWithText("Go back").fetchSemanticsNodes().isEmpty()
         }
     }
 
@@ -422,6 +463,7 @@ class InboxUndoJourneyTest {
         compose.mainClock.advanceTimeBy(6_000)
         compose.waitForIdle()
         compose.onNodeWithText("Jumped to top").assertDoesNotExist()
+        compose.onNodeWithText("Go back").assertDoesNotExist()
     }
 
     @Test fun leavingSettingsRemovesSettingsFeedback() {
