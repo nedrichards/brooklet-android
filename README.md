@@ -63,6 +63,10 @@ Both applications compile and target API 37.1. The phone minimum is API 28;
 the watch minimum is API 33 (Wear OS 4). Article images remain network-only on
 the phone and are omitted entirely from the watch reader.
 
+The phone and Wear launcher icons share editable SVG masters and a generator.
+See [the launcher icon source and generation notes](docs/ANDROID_LAUNCHER_ICONS.md)
+for adaptive, themed, development, and store artwork.
+
 ## Local article search
 
 Search in Inbox, Saved, or Library includes titles, feed names, authors, and

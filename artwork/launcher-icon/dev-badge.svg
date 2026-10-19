@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <title>Brooklet development build badge</title>
+  <desc>A mint circle with code brackets, separated from the paper by a teal rim.</desc>
+  <path id="moat" fill="#164E5C" d="M79.5 72A7.5 7.5 0 1 0 64.5 72A7.5 7.5 0 1 0 79.5 72Z"/>
+  <path id="disc" fill="#8CE3CE" d="M78 72A6 6 0 1 0 66 72A6 6 0 1 0 78 72Z"/>
+  <path id="brackets" fill="#164E5C" d="M70.8 68.6L67.4 72L70.8 75.4L71.9 74.3L69.6 72L71.9 69.7ZM73.2 68.6L72.1 69.7L74.4 72L72.1 74.3L73.2 75.4L76.6 72Z"/>
+</svg>
