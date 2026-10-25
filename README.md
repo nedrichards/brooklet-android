@@ -102,6 +102,16 @@ After that one-time credential transfer, the watch syncs directly with the
 configured Miniflux HTTPS server; the phone does not relay article caches or
 reading actions.
 
+In the watch Inbox, turn the crown back past the top until “Ready to refresh”.
+Refresh starts when the crown stops; turning forward before then cancels it.
+A flowing ripple accompanies an explicit refresh. The Inbox holds its position
+through queued and running work, then shows the completed result with one
+settling movement. Further down, a new-articles button returns you to the latest
+without interrupting your current position.
+Offline background checks stay quiet. System Reduce motion disables the ripple
+and arrival movement, and Sync & settings remains available without using the
+crown gesture.
+
 When both `brooklet.devMinifluxUrl` and `brooklet.devMinifluxToken` are present
 in the ignored `local.properties`, the debug Wear build embeds those same local
 development values and provisions itself directly. No phone interaction is

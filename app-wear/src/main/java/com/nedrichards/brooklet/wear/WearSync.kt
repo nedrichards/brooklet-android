@@ -1,6 +1,7 @@
 package com.nedrichards.brooklet.wear
 
 import android.content.Context
+import androidx.wear.tiles.TileService
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -13,7 +14,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.await
 import androidx.work.workDataOf
-import androidx.wear.tiles.TileService
 import com.nedrichards.brooklet.model.FailureKind
 import com.nedrichards.brooklet.model.MinifluxEntryQuery
 import com.nedrichards.brooklet.model.MinifluxEntryStatus
@@ -29,12 +29,16 @@ import com.nedrichards.brooklet.wear.data.WearEntryEntity
 import com.nedrichards.brooklet.wear.data.WearSyncStateEntity
 import com.nedrichards.brooklet.wear.data.WearTokenCipher
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -73,7 +77,7 @@ class WearSyncEngine(
                 state("PRUNING")
                 dao.enforceCachePolicy(WatchCachePolicy(), clock(), activeEntryId())
             }
-            state("COMPLETE", lastSuccess = clock())
+            state("COMPLETE", lastSuccess = if (pull) clock() else null)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -225,6 +229,12 @@ class WearSyncEngine(
 class WearSyncScheduler(context: Context) {
     private val appContext = context.applicationContext
     private val work = WorkManager.getInstance(appContext)
+    // Observe periodic work as well as the foreground/action chain.
+    internal val syncWork get() = combine(
+        work.getWorkInfosForUniqueWorkFlow(SYNC),
+        work.getWorkInfosForUniqueWorkFlow(PERIODIC),
+    ) { foreground, periodic -> foreground + periodic }
+    internal fun userSyncWork(id: UUID) = work.getWorkInfoByIdFlow(id)
     private val network = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
     private val periodicNetwork = Constraints.Builder()
         .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -243,13 +253,14 @@ class WearSyncScheduler(context: Context) {
     fun enqueueUserSync() = enqueue(WatchWorkIntent.USER_SYNC)
     fun enqueueBootstrap() = enqueue(WatchWorkIntent.BOOTSTRAP)
 
-    private fun enqueue(intent: WatchWorkIntent) {
+    private fun enqueue(intent: WatchWorkIntent): UUID {
         val request = OneTimeWorkRequestBuilder<WearSyncWorker>()
             .setInputData(workDataOf("intent" to intent.name))
             .setConstraints(network)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         work.enqueueUniqueWork(SYNC, existingWorkPolicy(intent), request)
+        return request.id
     }
 
     fun ensurePeriodic() {
@@ -291,8 +302,11 @@ class WearSyncWorker(context: Context, params: WorkerParameters) : CoroutineWork
             try {
                 WearSyncEngine(WearDatabase.getInstance(applicationContext).dao(), WearTokenCipher()).run(
                     pull = intent.pulls,
-                activeEntryId = { WearSyncCoordinator.activeReaderEntryId },
+                    activeEntryId = { WearSyncCoordinator.activeReaderEntryId },
                 )
+                // Publish only real pull completions. Periodic WorkManager requests never enter
+                // SUCCEEDED and discard result output, so their WorkInfo cannot signal arrival.
+                if (intent.pulls) WearSyncCoordinator.pullCompleted()
                 Result.success()
             } catch (error: ApiException) {
                 if (intent.retries && error.kind == FailureKind.RETRYABLE) Result.retry() else Result.failure()
@@ -309,6 +323,10 @@ class WearSyncWorker(context: Context, params: WorkerParameters) : CoroutineWork
 /** Serializes account replacement/deletion, worker sync, and direct body fetch. */
 object WearSyncCoordinator {
     private val mutex = Mutex()
+    private val completedPulls = MutableStateFlow(0L)
+    internal val pullCompletions = completedPulls.asStateFlow()
+    internal fun pullCompleted() { completedPulls.value += 1 }
+
     private val openReaderEntries = linkedSetOf<Long>()
     @Volatile var activeReaderEntryId: Long = -1
         private set

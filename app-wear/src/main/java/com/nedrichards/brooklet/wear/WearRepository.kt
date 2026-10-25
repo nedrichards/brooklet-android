@@ -16,6 +16,7 @@ class WearRepository(
     val unreadCount = dao.observeUnreadCount()
     val syncState = dao.observeSyncState()
     val bodyBytes = dao.observeBodyBytes()
+    suspend fun inboxSnapshot() = dao.inboxSnapshot(limit = 100)
     fun entry(id: Long) = dao.observeEntry(id)
     fun karakeep(entryId: Long) = dao.observeKarakeep(entryId)
     suspend fun readerPosition(entryId: Long) = dao.readerPosition(entryId)

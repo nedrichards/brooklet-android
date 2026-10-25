@@ -6,7 +6,12 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.net.toUri
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.OverscrollEffect
+import androidx.compose.foundation.rememberOverscrollEffect
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +28,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -30,8 +36,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -43,6 +54,9 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import androidx.wear.compose.foundation.LocalReduceMotion
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
+import androidx.work.WorkInfo
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
@@ -66,9 +80,12 @@ import androidx.wear.remote.interactions.RemoteActivityHelper
 import com.nedrichards.brooklet.model.DocumentBlock
 import com.nedrichards.brooklet.wear.data.WearEntrySummary
 import java.net.URI
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -173,6 +190,18 @@ private fun SetupScreen(
     LaunchedEffect(started, state.status) {
         if (reconnect && started && state.status == "Connected") onConnected()
     }
+    SetupContent(state, reconnect, directDevelopmentSetup) {
+        scope.launch { provisioning.beginSetup() }
+    }
+}
+
+@Composable
+internal fun SetupContent(
+    state: WatchSetupState,
+    reconnect: Boolean,
+    directDevelopmentSetup: Boolean,
+    onRetry: () -> Unit,
+) {
     WearList { _ ->
         item { ListHeader { Text("Brooklet") } }
         item {
@@ -199,9 +228,9 @@ private fun SetupScreen(
         if (state.retryAvailable) {
             item {
                 Button(
-                    onClick = { scope.launch { provisioning.beginSetup() } },
+                    onClick = onRetry,
                     enabled = !state.requesting,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                     label = { Text("Try again") },
                 )
             }
@@ -264,7 +293,7 @@ internal fun inboxRows(inbox: List<WearEntrySummary>, undo: InboxUndoState?): Li
 
 @Composable
 private fun InboxScreen(application: BrookletWearApplication, onOpen: (Long) -> Unit, onStatus: () -> Unit) {
-    val inbox by application.repository.inbox.collectAsStateWithLifecycle(initialValue = emptyList())
+    val inbox by application.repository.inbox.collectAsStateWithLifecycle(initialValue = null)
     val sync by application.repository.syncState.collectAsStateWithLifecycle(initialValue = null)
     val scope = rememberCoroutineScope()
     val transformation = rememberTransformationSpec()
@@ -277,67 +306,206 @@ private fun InboxScreen(application: BrookletWearApplication, onOpen: (Long) -> 
     }
     LaunchedEffect(inbox, undo?.restoring) {
         val restoring = undo?.takeIf { it.restoring } ?: return@LaunchedEffect
-        if (inbox.any { it.id == restoring.entry.id }) undo = null
+        if (inbox?.any { it.id == restoring.entry.id } == true) undo = null
     }
-    val rows = remember(inbox, undo) { inboxRows(inbox, undo) }
-    WearList { listState ->
-        item {
-            ListHeader {
-                val unread = if (inbox.size == 1) "1 unread" else "${inbox.size} unread"
-                Text("Brooklet · $unread")
-            }
+    val listState = rememberTransformingLazyColumnState()
+    val reduceMotion = LocalReduceMotion.current
+    val density = LocalDensity.current
+    val workFlow = remember(application) { application.scheduler.syncWork }
+    val work by workFlow.collectAsStateWithLifecycle(initialValue = null)
+    var requestId by rememberSaveable { mutableStateOf<String?>(null) }
+    val requestFlow = remember(requestId) {
+        requestId?.let { id -> application.scheduler.userSyncWork(UUID.fromString(id)).map { id to it } } ?: flowOf(null)
+    }
+    val observedRequest by requestFlow.collectAsStateWithLifecycle(initialValue = null)
+    val request = observedRequest?.takeIf { it.first == requestId }?.second
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var arrival by remember { mutableStateOf(InboxArrival()) }
+    val pullCompletion by WearSyncCoordinator.pullCompletions.collectAsStateWithLifecycle()
+    val initialCompletion = remember { WearSyncCoordinator.pullCompletions.value }
+    var arrivingIds by remember { mutableStateOf(emptySet<Long>()) }
+    var arrivalWave by remember { mutableIntStateOf(0) }
+    var refreshArrival by remember { mutableStateOf(false) }
+    var jumping by remember { mutableStateOf(false) }
+    var revealedRows by remember { mutableStateOf(emptySet<Long>()) }
+    val refreshing = requestId != null
+    val pulling = work?.any { it.state == WorkInfo.State.RUNNING } == true
+    val showNew: (Boolean) -> Unit = { fromRefresh ->
+        refreshArrival = fromRefresh
+        arrivingIds = arrival.newIds
+        arrivalWave++
+        arrival = arrival.reveal()
+        // Only additions need a new anchor. Re-anchoring an unchanged Inbox can move its
+        // headline independently of the refresh indicator as the held list is released.
+        if (arrivingIds.isNotEmpty()) listState.requestScrollToItem(0)
+    }
+    val refresh = {
+        if (requestId == null) {
+            feedback = null
+            requestId = application.scheduler.enqueueUserSync().toString()
         }
-        if (rows.isEmpty()) item { Text("No unread articles", modifier = Modifier.fillMaxWidth().padding(16.dp)) }
-        items(rows, key = { row -> when (row) { is InboxItem.Entry -> "entry-${row.value.id}"; is InboxItem.Undo -> "undo-${row.value.id}" } }) { row ->
-            when (row) {
-                is InboxItem.Undo -> FilledTonalButton(
-                    onClick = {
-                        undo = undo?.copy(restoring = true)
-                        scope.launch {
-                            runCatching { application.repository.setRead(row.value.id, false) }
-                                .onFailure { undo = undo?.copy(restoring = false) }
+    }
+    LaunchedEffect(inbox) { inbox?.let { arrival = arrival.receive(it, holdRemovals = refreshing) } }
+    LaunchedEffect(pullCompletion) {
+        if (pullCompletion != initialCompletion && !refreshing) {
+            // Explicit refresh owns its handoff; don't publish its result a frame before WorkManager finishes.
+            // Read after the completed pull, even if Room's last page is still in flight to the UI.
+            arrival = arrival.completed(application.repository.inboxSnapshot())
+        }
+    }
+    LaunchedEffect(observedRequest, requestId) {
+        val observed = observedRequest ?: return@LaunchedEffect
+        if (requestId == null || observed.first != requestId) return@LaunchedEffect
+        val current = observed.second
+        // Replacing unique work may delete the old row instead of emitting CANCELLED.
+        if (current != null && !current.state.isFinished) return@LaunchedEffect
+        feedback = when (current?.state) {
+            WorkInfo.State.SUCCEEDED -> {
+                arrival = arrival.completed(application.repository.inboxSnapshot())
+                val unchanged = arrival.newIds.isEmpty()
+                if (!listState.canScrollBackward && !listState.isScrollInProgress && revealedRows.isEmpty() && !jumping) {
+                    // Publish the rows in the same frame that releases the held list. Do not run
+                    // a second set of row springs against the viewport's settling movement.
+                    showNew(true)
+                }
+                if (unchanged) "Up to date" else null
+            }
+            WorkInfo.State.CANCELLED, null -> "Refresh cancelled"
+            else -> if (sync?.phase == "RECONNECT_REQUIRED") "Reconnect using phone" else "Couldn't refresh · try again"
+        }
+        if (current?.state != WorkInfo.State.SUCCEEDED) {
+            arrival = arrival.receive(application.repository.inboxSnapshot())
+        }
+        if (!refreshArrival) {
+            refreshArrival = true
+            arrivalWave++
+        }
+        requestId = null
+    }
+    LaunchedEffect(feedback) { if (feedback != null) { delay(3_000); feedback = null } }
+    LaunchedEffect(arrivalWave) { delay(700); arrivingIds = emptySet(); refreshArrival = false }
+    val atTop = !listState.canScrollBackward
+    LaunchedEffect(arrival.newIds, atTop, listState.isScrollInProgress, refreshing, pulling, revealedRows, jumping) {
+        if (arrival.newIds.isNotEmpty() && atTop && !listState.isScrollInProgress && !refreshing && !pulling && revealedRows.isEmpty() && !jumping) {
+            delay(150)
+            showNew(false)
+        }
+    }
+    val rows = remember(arrival, undo) { inboxRows(arrival.entries, undo) }
+    InboxRefreshLayout(
+        state = listState,
+        refreshing = refreshing,
+        running = request?.state == WorkInfo.State.RUNNING,
+        newCount = if (atTop) 0 else arrival.newIds.size,
+        message = feedback,
+        canRefresh = revealedRows.isEmpty() && !jumping,
+        onRefresh = refresh,
+        onShowNew = {
+            scope.launch {
+                jumping = true
+                try {
+                    if (reduceMotion) listState.scrollToItem(0) else listState.animateScrollToItem(0)
+                    showNew(false)
+                } finally { jumping = false }
+            }
+        },
+    ) { refreshModifier, refreshStatus ->
+        WearList(listState = listState, modifier = refreshModifier, overscrollEffect = null) {
+            item(key = "inbox-header") {
+                InboxHeader(arrival.entries.size, refreshStatus)
+            }
+            if (rows.isEmpty()) item { Text("No unread articles", modifier = Modifier.fillMaxWidth().padding(16.dp)) }
+            items(rows, key = { row -> when (row) { is InboxItem.Entry -> "entry-${row.value.id}"; is InboxItem.Undo -> "undo-${row.value.id}" } }) { row ->
+                when (row) {
+                    is InboxItem.Undo -> FilledTonalButton(
+                        onClick = {
+                            arrival = arrival.restore(row.value.id, undo?.index ?: 0)
+                            undo = undo?.copy(restoring = true)
+                            scope.launch {
+                                runCatching { application.repository.setRead(row.value.id, false) }
+                                    .onFailure { undo = undo?.copy(restoring = false) }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformation).animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = if (reduceMotion || refreshing || refreshArrival) null else spring(dampingRatio = .85f, stiffness = 420f)),
+                        enabled = undo?.restoring != true,
+                        label = { Text(if (undo?.restoring == true) "Restoring…" else "Undo mark read") },
+                        secondaryLabel = { Text(row.value.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                    is InboxItem.Entry -> {
+                        val entrance = remember { Animatable(if (row.value.id in arrivingIds && !reduceMotion && !refreshArrival) -28f else 0f) }
+                        LaunchedEffect(arrivalWave, reduceMotion, refreshArrival) {
+                            if (row.value.id in arrivingIds && !reduceMotion && !refreshArrival) {
+                                entrance.snapTo(-28f)
+                                delay(arrivingIds.indexOf(row.value.id).coerceIn(0, 2) * 35L)
+                                entrance.animateTo(0f, spring(dampingRatio = .82f, stiffness = 380f))
+                            } else entrance.snapTo(0f)
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformation).animateItem(),
-                    enabled = undo?.restoring != true,
-                    label = { Text(if (undo?.restoring == true) "Restoring…" else "Undo mark read") },
-                    secondaryLabel = { Text(row.value.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                )
-                is InboxItem.Entry -> InboxArticleRow(
-                    entry = row.value,
-                    onOpen = { onOpen(row.value.id) },
-                    onRead = {
-                        val index = inbox.indexOfFirst { it.id == row.value.id }
-                        undo = InboxUndoState(index, row.value)
-                        scope.launch { application.repository.setRead(row.value.id, true) }
-                    },
-                    onStar = { scope.launch { application.repository.setStarred(row.value.id, !row.value.starred) } },
-                    scrolling = listState.isScrollInProgress,
-                    modifier = Modifier.transformedHeight(this, transformation).animateItem(),
+                        InboxArticleRow(
+                            entry = row.value,
+                            onOpen = { onOpen(row.value.id) },
+                            onRead = {
+                                val index = arrival.entries.indexOfFirst { it.id == row.value.id }
+                                undo = InboxUndoState(index, row.value)
+                                arrival = arrival.hide(row.value.id)
+                                scope.launch {
+                                    runCatching { application.repository.setRead(row.value.id, true) }
+                                        .onFailure {
+                                            arrival = arrival.restore(row.value.id, index)
+                                            undo = null
+                                        }
+                                }
+                            },
+                            onStar = { scope.launch { application.repository.setStarred(row.value.id, !row.value.starred) } },
+                            scrolling = listState.isScrollInProgress || jumping,
+                            onRevealChanged = { revealed -> revealedRows = if (revealed) revealedRows + row.value.id else revealedRows - row.value.id },
+                            modifier = Modifier.graphicsLayer { translationY = with(density) { entrance.value.dp.toPx() } }.transformedHeight(this, transformation).animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = if (reduceMotion || refreshing || refreshArrival) null else spring(dampingRatio = .85f, stiffness = 420f)),
+                        )
+                    }
+                }
+            }
+            item(key = "inbox-settings") {
+                val status = when (sync?.phase) {
+                    "ERROR" -> lastSyncLabel(sync?.lastSuccessfulSyncAt)
+                    "RECONNECT_REQUIRED" -> "Reconnect using phone"
+                    "CONNECTING", "PUSHING_ACTIONS", "PULLING_ENTRIES", "BOOTSTRAPPING", "PRUNING" -> "Syncing…"
+                    else -> lastSyncLabel(sync?.lastSuccessfulSyncAt)
+                }
+                Button(
+                    onClick = onStatus,
+                    modifier = Modifier.fillMaxWidth(),
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    label = { Text("Sync & settings") },
+                    secondaryLabel = { Text(status, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 )
             }
-        }
-        item {
-            val status = when (sync?.phase) {
-                "ERROR" -> "Offline · sync failed"
-                "RECONNECT_REQUIRED" -> "Reconnect using phone"
-                "CONNECTING", "PUSHING_ACTIONS", "PULLING_ENTRIES", "BOOTSTRAPPING", "PRUNING" -> "Syncing…"
-                else -> lastSyncLabel(sync?.lastSuccessfulSyncAt)
-            }
-            Button(
-                onClick = onStatus,
-                modifier = Modifier.fillMaxWidth(),
-                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                label = { Text("Sync & settings") },
-                secondaryLabel = { Text(status, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            )
         }
     }
 }
 
 @Composable
-private fun InboxArticleRow(entry: WearEntrySummary, onOpen: () -> Unit, onRead: () -> Unit, onStar: () -> Unit, scrolling: Boolean, modifier: Modifier = Modifier) {
+internal fun InboxHeader(unreadCount: Int, status: String?) {
+    ListHeader {
+        val unread = if (unreadCount == 1) "1 unread" else "$unreadCount unread"
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Brooklet")
+            // The title and status share fixed line counts, so status changes cannot resize the header.
+            Text(status ?: unread, style = MaterialTheme.typography.labelSmall,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.semantics {
+                    if (status != null) liveRegion = LiveRegionMode.Polite
+                })
+        }
+    }
+}
+
+@Composable
+private fun InboxArticleRow(entry: WearEntrySummary, onOpen: () -> Unit, onRead: () -> Unit, onStar: () -> Unit, scrolling: Boolean, modifier: Modifier = Modifier, onRevealChanged: (Boolean) -> Unit = {}) {
     val revealState = rememberRevealState()
+    LaunchedEffect(revealState) {
+        snapshotFlow { revealState.currentValue != RevealValue.Covered || revealState.targetValue != RevealValue.Covered }
+            .distinctUntilChanged().collect { onRevealChanged(it) }
+    }
+    DisposableEffect(Unit) { onDispose { onRevealChanged(false) } }
     val scope = rememberCoroutineScope()
     val markRead = {
         scope.launch {
@@ -676,12 +844,15 @@ private fun DisconnectScreen(application: BrookletWearApplication, onDisconnecte
 
 @Composable
 private fun WearList(
+    modifier: Modifier = Modifier,
     initialAnchorItemIndex: Int = 0,
     initialAnchorItemScrollOffset: Int = 0,
     onPositionChanged: ((Int, Int) -> Unit)? = null,
+    listState: TransformingLazyColumnState? = null,
+    overscrollEffect: OverscrollEffect? = rememberOverscrollEffect(),
     content: androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope.(androidx.wear.compose.foundation.lazy.TransformingLazyColumnState) -> Unit,
 ) {
-    val state = rememberTransformingLazyColumnState(initialAnchorItemIndex, initialAnchorItemScrollOffset)
+    val state = listState ?: rememberTransformingLazyColumnState(initialAnchorItemIndex, initialAnchorItemScrollOffset)
     LaunchedEffect(state, onPositionChanged) {
         if (onPositionChanged != null) {
             snapshotFlow { state.anchorItemIndex to state.anchorItemScrollOffset }
@@ -701,7 +872,8 @@ private fun WearList(
         TransformingLazyColumn(
             state = state,
             contentPadding = padding,
-            modifier = Modifier.fillMaxSize(),
+            overscrollEffect = overscrollEffect,
+            modifier = modifier.fillMaxSize(),
         ) {
             content(state)
         }
