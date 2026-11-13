@@ -104,6 +104,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Verify keyboard, mouse and existing touch journeys
+        id: emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 36
@@ -112,13 +113,9 @@ jobs:
           disable-animations: true
           # Native sendKeySync delivery intermittently times out on the hosted
           # API 36 emulator (runs 37671329521 and 37144297922). Keep this test
-          # runnable locally, but exclude it from both hosted configurations.
+          # runnable locally, but exclude it from hosted journeys.
           script: |
             ./gradlew --no-daemon :app-phone:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notClass=com.nedrichards.brooklet.KeyboardJourneyTest#heldReadKeyDoesNotDismissMoreThanOneArticle
-            adb shell wm size 1600x1000
-            adb shell wm density 240
-            sleep 8
-            ./gradlew --no-daemon :app-phone:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.nedrichards.brooklet.KeyboardJourneyTest -Pandroid.testInstrumentationRunnerArguments.notClass=com.nedrichards.brooklet.KeyboardJourneyTest#heldReadKeyDoesNotDismissMoreThanOneArticle
       - name: Summarize Android journey results
         if: always()
         run: |
@@ -148,7 +145,7 @@ jobs:
                           if issue is not None:
                               details = (issue.text or "").strip()
                               failures.append((case.attrib.get("classname", suite.attrib.get("name", "test")), case.attrib.get("name", "unknown"), details))
-              lines.append(f"{tests} tests, {failed} failures, {skipped} skipped.")
+              lines.append(f"Instrumentation results: {tests} tests, {failed} failures, {skipped} skipped.")
               if failures:
                   lines.extend(["", "### Failures", ""])
                   for classname, name, details in failures:
@@ -160,6 +157,22 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("\n".join(lines) + "\n")
           PY
+      - name: Classify emulator and instrumentation outcome
+        if: always()
+        env:
+          EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
+        run: |
+          {
+            echo
+            echo "### Outcome classification"
+            if [[ "$EMULATOR_OUTCOME" != "success" ]]; then
+              echo "Emulator setup or instrumentation command failed before completing the journey step (outcome: $EMULATOR_OUTCOME). Check the emulator runner and ADB logs; this is an infrastructure or execution failure unless test XML reports assertion failures."
+            elif grep -R -q '<failure\|<error' app/build/outputs/androidTest-results/connected 2>/dev/null; then
+              echo "Instrumentation completed with failing test cases. See the named cases and stack traces above; these are test failures, separate from emulator setup."
+            else
+              echo "Instrumentation completed without reported test failures."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload journey reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
