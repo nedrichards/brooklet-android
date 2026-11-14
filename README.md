@@ -160,3 +160,5 @@ Treat CI APKs as short-lived test builds: they use the debug application ID and
 debug signing certificate, are not optimized release binaries, and must not be
 published to an app store. A contributor from a fork cannot obtain repository
 secrets through this pull-request workflow.
+
+For hosted checks and artifacts, see [continuous integration](docs/CI.md).

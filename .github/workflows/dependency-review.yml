@@ -26,3 +26,6 @@ jobs:
         run: |
           echo '::notice::Dependency review and CodeQL require GitHub Code Security for private repositories.'
           echo 'Dependency review and CodeQL are unavailable without GitHub Code Security on this private repository. Dependabot version updates, vulnerability alerts, resolved dependency submission, tests and lint remain enabled. After enabling the licensed feature, set GH_CODE_SECURITY_ENABLED=true to activate the extra checks.' >> "$GITHUB_STEP_SUMMARY"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
