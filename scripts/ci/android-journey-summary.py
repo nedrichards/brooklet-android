@@ -33,3 +33,6 @@ text = "\n".join(lines) + "\n"
 print(text)
 with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
     output.write(text)
+
+if failed or count <= skipped:
+    raise SystemExit("Installed journeys require at least one executed test and no failing assertions")
