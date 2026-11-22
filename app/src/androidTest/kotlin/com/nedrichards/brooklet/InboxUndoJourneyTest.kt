@@ -90,6 +90,7 @@ class InboxUndoJourneyTest {
 
         compose.onNodeWithText("Undo me").performTouchInput { swipeLeft() }
         compose.waitUntil(5_000) { isRead(1) }
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").assertIsDisplayed().performClick()
 
         compose.waitUntil(5_000) { !isRead(1) }
@@ -109,6 +110,7 @@ class InboxUndoJourneyTest {
         compose.waitUntil(5_000) { isRead(2) }
 
         compose.onNodeWithText("Marked 2 articles read").assertIsDisplayed()
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").performClick()
         compose.waitUntil(5_000) { !isRead(1) && !isRead(2) }
 
@@ -133,6 +135,7 @@ class InboxUndoJourneyTest {
         compose.waitUntil(5_000) { isRead(50) }
         val anchorBeforeUndo = compose.onNodeWithText("Today 2")
             .assertIsDisplayed().getUnclippedBoundsInRoot().top.value
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").performClick()
 
         compose.waitUntil(5_000) { !isRead(50) }
@@ -154,6 +157,7 @@ class InboxUndoJourneyTest {
         compose.waitUntil(5_000) { isRead(50) }
         val secondAnchorBeforeUndo = compose.onNodeWithText("Today 2")
             .assertIsDisplayed().getUnclippedBoundsInRoot().top.value
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").performClick()
 
         compose.waitUntil(5_000) { !isRead(50) }
@@ -184,6 +188,10 @@ class InboxUndoJourneyTest {
                 }
             }
         }
+        compose.waitForIdle()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("entry-1").fetchSemanticsNodes().isNotEmpty()
+        }
 
         compose.onNodeWithText("Lifecycle").performTouchInput { swipeLeft() }
         compose.waitUntil(5_000) { isRead(1) }
@@ -191,6 +199,7 @@ class InboxUndoJourneyTest {
         compose.onNodeWithTag("host-absent").assertIsDisplayed()
         compose.runOnIdle { hostVisible = true }
 
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").assertIsDisplayed().performClick()
         compose.waitUntil(5_000) { !isRead(1) }
         compose.onNodeWithText("Lifecycle").assertIsDisplayed()
@@ -222,6 +231,7 @@ class InboxUndoJourneyTest {
         compose.onNodeWithContentDescription("More actions").performClick()
         compose.onNodeWithText("Mark all read").performClick()
         compose.waitUntil(5_000) { isRead(1) && isRead(2) }
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").performClick()
         compose.waitUntil(5_000) { !isRead(1) && !isRead(2) }
 
@@ -239,9 +249,7 @@ class InboxUndoJourneyTest {
             assertTrue(actions.single { it.label == "Mark read" }.action())
         }
         compose.waitUntil(5_000) { isRead(1) }
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("Undo").fetchSemanticsNodes().isNotEmpty()
-        }
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").performClick()
         compose.waitUntil(5_000) { !isRead(1) }
 
@@ -441,6 +449,7 @@ class InboxUndoJourneyTest {
 
         compose.onNodeWithText("Entry 30").performTouchInput { swipeLeft() }
 
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").assertIsDisplayed()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithText("Go back").fetchSemanticsNodes().isEmpty()
@@ -452,6 +461,7 @@ class InboxUndoJourneyTest {
         showInbox()
         compose.onNodeWithTag("entry-list").performScrollToIndex(15)
         compose.onNodeWithText("Entry 15").performTouchInput { swipeLeft() }
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").assertIsDisplayed()
 
         compose.onNodeWithTag("destination-inbox").performClick()
@@ -506,6 +516,7 @@ class InboxUndoJourneyTest {
 
         compose.onNodeWithText("Entry 15").performTouchInput { swipeLeft() }
 
+        waitForUndoSnackbar()
         compose.onNodeWithText("Undo").assertIsDisplayed()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithContentDescription("Scroll to top").fetchSemanticsNodes().isEmpty()
@@ -546,6 +557,12 @@ class InboxUndoJourneyTest {
         compose.waitForIdle()
         newestSeededEntryId?.let { id ->
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("entry-$id").fetchSemanticsNodes().isNotEmpty() }
+        }
+    }
+
+    private fun waitForUndoSnackbar() {
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Undo").fetchSemanticsNodes().isNotEmpty()
         }
     }
 
